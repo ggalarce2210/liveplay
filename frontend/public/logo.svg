@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="200" height="200">
+  <defs>
+    <linearGradient id="lp-badge" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2f9a52" />
+      <stop offset="1" stop-color="#0d2e19" />
+    </linearGradient>
+  </defs>
+  <rect width="40" height="40" rx="11" fill="url(#lp-badge)" />
+  <path d="M4 29 Q20 21 36 29" stroke="#ffffff" stroke-opacity="0.16" stroke-width="2" fill="none" stroke-linecap="round" />
+  <path d="M16.2 12.3 L27.4 20 L16.2 27.7 Z" fill="#ffffff" />
+  <circle cx="31" cy="9" r="4.5" fill="#ffb020" stroke="#0d2e19" stroke-width="1.5" />
+</svg>
