@@ -13,6 +13,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { ComplexesModule } from './complexes/complexes.module';
 import { CourtsModule } from './courts/courts.module';
+import { DiscoveryModule } from './discovery/discovery.module';
 import { CamerasModule } from './cameras/cameras.module';
 import { MatchesModule } from './matches/matches.module';
 import { VideosModule } from './videos/videos.module';
@@ -35,6 +36,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
     UsersModule,
     ComplexesModule,
     CourtsModule,
+    DiscoveryModule,
     CamerasModule,
     MatchesModule,
     VideosModule,

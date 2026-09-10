@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import LogoMark from '@/components/LogoMark';
+import CourtExplorer from '@/components/CourtExplorer';
 
 const FEATURES = [
   { icon: '⚽', title: 'Fútbol 5', desc: 'Goles, tarjetas y jugadas asociadas al minuto exacto del video de tu partido.' },
@@ -31,6 +32,7 @@ export default function LandingPage() {
           </span>
         </div>
         <nav className="hidden items-center gap-8 text-sm text-ink-300 md:flex">
+          <a href="#buscar" className="hover:text-white">Buscar mi partido</a>
           <a href="#deportes" className="hover:text-white">Deportes</a>
           <a href="#funciones" className="hover:text-white">Funciones</a>
           <a href="#reproductor" className="hover:text-white">Reproductor</a>
@@ -55,6 +57,16 @@ export default function LandingPage() {
         </div>
         {/* Credenciales de la demo — quitar en producción */}
         <p className="mt-4 text-xs text-ink-400">Demo: juan@demo.com · contraseña demo1234</p>
+      </section>
+
+      <section id="buscar" className="relative z-10 mx-auto max-w-4xl px-6 pb-20">
+        <div className="mx-auto mb-8 max-w-2xl text-center">
+          <h2 className="text-2xl font-bold text-white sm:text-3xl">Buscá tu partido, sin necesidad de cuenta</h2>
+          <p className="mt-2 text-ink-300">
+            Elegí tu deporte, tu ciudad y la cancha donde jugaste — cada cancha tiene su propia cámara IP grabando. Para ver el video hace falta iniciar sesión y haber participado del partido.
+          </p>
+        </div>
+        <CourtExplorer />
       </section>
 
       <section id="reproductor" className="relative z-10 mx-auto max-w-5xl px-6 pb-20">

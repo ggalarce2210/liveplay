@@ -96,11 +96,15 @@ export const complexes = pgTable('complexes', {
   id: id(),
   name: text('name').notNull(),
   address: text('address'),
+  /** Ciudad del complejo — habilita el buscador público por ciudad (§5.1, buscador multi-cancha). */
+  city: text('city'),
   timezone: text('timezone').notNull().default('America/Argentina/Buenos_Aires'),
   openingHours: jsonb('opening_hours'),
   logoUrl: text('logo_url'),
   ...timestamps,
-});
+}, (t) => ({
+  cityIdx: index('complexes_city_idx').on(t.city),
+}));
 
 export const courts = pgTable('courts', {
   id: id(),

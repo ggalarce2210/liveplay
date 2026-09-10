@@ -19,6 +19,8 @@ export interface Complex {
   id: string;
   name: string;
   address?: string | null;
+  city?: string | null;
+  courts?: Court[];
 }
 
 export interface Court {
@@ -43,6 +45,19 @@ export interface Team {
   label: string;
   score?: number | null;
   setsWon?: number | null;
+}
+
+/** Resultado liviano del buscador público (GET /discovery/matches) — sin datos personales de
+ * jugadores ni URLs de video, ver backend/src/discovery/discovery.service.ts. */
+export interface PublicMatchSummary {
+  id: string;
+  date: string;
+  startTime: string;
+  endTime?: string | null;
+  sportType: SportType;
+  status: MatchStatus;
+  teams: Team[];
+  hasVideo: boolean;
 }
 
 export interface MatchPlayerUser {

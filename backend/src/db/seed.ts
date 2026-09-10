@@ -45,6 +45,7 @@ async function main() {
     .values({
       name: 'Deportivo San Martín',
       address: 'Av. Siempre Viva 1234, Buenos Aires',
+      city: 'Buenos Aires',
       timezone: 'America/Argentina/Buenos_Aires',
       openingHours: { mon: ['08:00-23:59'], tue: ['08:00-23:59'], wed: ['08:00-23:59'], thu: ['08:00-23:59'], fri: ['08:00-23:59'], sat: ['08:00-23:59'], sun: ['08:00-23:59'] },
     })
@@ -59,6 +60,78 @@ async function main() {
     { courtId: court1.id, name: 'Cámara IP 01', type: 'IP_CAMERA', rtspUrl: 'rtsp://192.168.1.101:554/stream1', status: 'ONLINE', lastSeenAt: new Date() },
     { courtId: court2.id, name: 'Cámara IP 02', type: 'IP_CAMERA', rtspUrl: 'rtsp://192.168.1.102:554/stream1', status: 'ONLINE', lastSeenAt: new Date() },
     { courtId: court3.id, name: 'Cámara IP 03 (NVR canal 3)', type: 'NVR', nvrChannel: 3, status: 'OFFLINE', lastSeenAt: new Date(Date.now() - 1000 * 60 * 60 * 5) },
+  ]);
+
+  console.log('🏟️  Creando complejos adicionales (para probar el buscador por ciudad/deporte)...');
+  const [complexCba] = await db
+    .insert(schema.complexes)
+    .values({
+      name: 'Padel Club Nueva Córdoba',
+      address: 'Bv. Illia 500, Córdoba',
+      city: 'Córdoba',
+      timezone: 'America/Argentina/Cordoba',
+    })
+    .returning();
+  await db.insert(schema.subscriptions).values({ complexId: complexCba.id, plan: 'BASIC', status: 'ACTIVE', cameraLimit: 5, retentionDays: 30 });
+  const [courtCbaPadel] = await db.insert(schema.courts).values({ complexId: complexCba.id, name: 'Cancha Norte', sportType: 'PADEL', status: 'ACTIVE' }).returning();
+  const [courtCbaFutbol] = await db.insert(schema.courts).values({ complexId: complexCba.id, name: 'Cancha Sur', sportType: 'FUTBOL5', status: 'ACTIVE' }).returning();
+  await db.insert(schema.cameras).values([
+    { courtId: courtCbaPadel.id, name: 'Cámara IP 01', type: 'IP_CAMERA', rtspUrl: 'rtsp://192.168.2.101:554/stream1', status: 'ONLINE', lastSeenAt: new Date() },
+    { courtId: courtCbaFutbol.id, name: 'Cámara IP 02', type: 'IP_CAMERA', rtspUrl: 'rtsp://192.168.2.102:554/stream1', status: 'ONLINE', lastSeenAt: new Date() },
+  ]);
+
+  const [complexRosario] = await db
+    .insert(schema.complexes)
+    .values({
+      name: 'Fútbol Norte Rosario',
+      address: 'Ovidio Lagos 2200, Rosario',
+      city: 'Rosario',
+      timezone: 'America/Argentina/Buenos_Aires',
+    })
+    .returning();
+  await db.insert(schema.subscriptions).values({ complexId: complexRosario.id, plan: 'BASIC', status: 'ACTIVE', cameraLimit: 5, retentionDays: 30 });
+  const [courtRosario] = await db.insert(schema.courts).values({ complexId: complexRosario.id, name: 'Cancha 1', sportType: 'FUTBOL5', status: 'ACTIVE' }).returning();
+  await db.insert(schema.cameras).values([
+    { courtId: courtRosario.id, name: 'Cámara IP 01', type: 'IP_CAMERA', rtspUrl: 'rtsp://192.168.3.101:554/stream1', status: 'ONLINE', lastSeenAt: new Date() },
+  ]);
+
+  // Un partido sin video todavía (SCHEDULED) en cada cancha nueva, así el buscador público
+  // (deporte → ciudad → cancha → fecha) tiene algo para encontrar de entrada, incluyendo el
+  // caso "grabación pendiente" (hasVideo: false).
+  const cbaMatchStart = new Date();
+  cbaMatchStart.setHours(20, 30, 0, 0);
+  const [cbaMatch] = await db
+    .insert(schema.matches)
+    .values({
+      complexId: complexCba.id,
+      courtId: courtCbaPadel.id,
+      sportType: 'PADEL',
+      date: cbaMatchStart.toISOString().slice(0, 10),
+      startTime: cbaMatchStart,
+      status: 'SCHEDULED',
+    })
+    .returning();
+  await db.insert(schema.teams).values([
+    { matchId: cbaMatch.id, label: 'Pareja A' },
+    { matchId: cbaMatch.id, label: 'Pareja B' },
+  ]);
+
+  const rosarioMatchStart = new Date();
+  rosarioMatchStart.setHours(18, 0, 0, 0);
+  const [rosarioMatch] = await db
+    .insert(schema.matches)
+    .values({
+      complexId: complexRosario.id,
+      courtId: courtRosario.id,
+      sportType: 'FUTBOL5',
+      date: rosarioMatchStart.toISOString().slice(0, 10),
+      startTime: rosarioMatchStart,
+      status: 'SCHEDULED',
+    })
+    .returning();
+  await db.insert(schema.teams).values([
+    { matchId: rosarioMatch.id, label: 'Equipo Verde' },
+    { matchId: rosarioMatch.id, label: 'Equipo Blanco' },
   ]);
 
   console.log('👤 Creando usuarios...');
