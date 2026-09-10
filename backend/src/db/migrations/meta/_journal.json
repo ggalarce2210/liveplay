@@ -15,6 +15,13 @@
       "when": 1789012363193,
       "tag": "0001_dry_sumo",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789062714013,
+      "tag": "0002_fancy_adam_destine",
+      "breakpoints": true
     }
   ]
 }

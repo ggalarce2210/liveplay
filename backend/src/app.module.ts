@@ -15,6 +15,7 @@ import { ComplexesModule } from './complexes/complexes.module';
 import { CourtsModule } from './courts/courts.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { CamerasModule } from './cameras/cameras.module';
+import { AgentModule } from './agent/agent.module';
 import { MatchesModule } from './matches/matches.module';
 import { VideosModule } from './videos/videos.module';
 import { BookmarksModule } from './bookmarks/bookmarks.module';
@@ -38,6 +39,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
     CourtsModule,
     DiscoveryModule,
     CamerasModule,
+    AgentModule,
     MatchesModule,
     VideosModule,
     BookmarksModule,

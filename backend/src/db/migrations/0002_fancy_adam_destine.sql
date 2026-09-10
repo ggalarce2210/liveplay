@@ -1,0 +1,1 @@
+ALTER TABLE "cameras" ADD COLUMN "agent_key_hash" text;

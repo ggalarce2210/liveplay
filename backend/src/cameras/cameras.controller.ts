@@ -39,4 +39,15 @@ export class CamerasController {
   heartbeat(@Param('id') id: string, @Body() body: { status: 'ONLINE' | 'OFFLINE' }) {
     return this.service.markHeartbeat(id, body.status);
   }
+
+  /**
+   * Genera (o rota) el token de agente de esta cámara — ver CamerasService.issueAgentToken.
+   * El valor de `token` en la respuesta es la única vez que viaja en texto plano: hay que
+   * copiarlo directo a la config del agente local (backend/AGENTE.md), no queda guardado acá.
+   */
+  @Audit('CAMERA_AGENT_TOKEN_ISSUE', 'Camera')
+  @Post(':id/agent-token')
+  issueAgentToken(@Param('id') id: string) {
+    return this.service.issueAgentToken(id);
+  }
 }

@@ -128,6 +128,12 @@ export const cameras = pgTable('cameras', {
   nvrChannel: integer('nvr_channel'),
   status: cameraStatusEnum('status').notNull().default('UNKNOWN'),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  /**
+   * Hash (sha256) del token que usa el agente local instalado en el complejo (ver
+   * backend/AGENTE.md) para autenticarse contra /agent/* sin necesitar un login humano — nunca
+   * guardamos el token en texto plano, solo su hash (§25, mismo criterio que las contraseñas).
+   */
+  agentKeyHash: text('agent_key_hash'),
   ...timestamps,
 });
 
