@@ -1,4 +1,5 @@
 import { Body, Controller, ForbiddenException, Get, GoneException, Inject, NotFoundException, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { StreamTokenService } from '../storage/stream-token.service';
 import { eq, sql } from 'drizzle-orm';
 import { Request } from 'express';
 import * as crypto from 'crypto';
@@ -16,7 +17,7 @@ import { StorageDriver } from '../storage/storage.types';
  */
 @Controller()
 export class ShareController {
-  constructor(private dbService: DbService, @Inject(STORAGE_DRIVER) private storage: StorageDriver) {}
+  constructor(private dbService: DbService, @Inject(STORAGE_DRIVER) private storage: StorageDriver, private streamTokens: StreamTokenService) {}
   private get db() {
     return this.dbService.db;
   }
@@ -58,7 +59,7 @@ export class ShareController {
       return { type: 'clip', title: link.clip.title, url };
     }
     if (link.match?.video?.hlsManifestKey) {
-      const url = await this.storage.getSignedReadUrl(link.match.video.hlsManifestKey, 60 * 30);
+      const url = await this.streamTokens.sign(link.match.video.hlsManifestKey, 60 * 30);
       return { type: 'match', manifestUrl: url };
     }
     throw new NotFoundException('El contenido todavía no está disponible');
