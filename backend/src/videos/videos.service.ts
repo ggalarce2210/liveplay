@@ -1,16 +1,15 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { asc, eq } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { videos } from '../db/schema';
-import { STORAGE_DRIVER } from '../storage/storage.module';
-import { StorageDriver } from '../storage/storage.types';
+import { StreamTokenService } from '../storage/stream-token.service';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 
 const MANIFEST_URL_TTL_SECONDS = 60 * 60 * 4; // 4hs: suficiente para ver el partido completo
 
 @Injectable()
 export class VideosService {
-  constructor(private dbService: DbService, @Inject(STORAGE_DRIVER) private storage: StorageDriver) {}
+  constructor(private dbService: DbService, private streamTokens: StreamTokenService) {}
   private get db() {
     return this.dbService.db;
   }
@@ -39,15 +38,21 @@ export class VideosService {
     return video.segments;
   }
 
-  /** Devuelve URLs firmadas de corta duración: nunca la ruta física real (§25). */
+  /**
+   * Devuelve URLs firmadas de corta duración: nunca la ruta física real (§25). Importante: acá
+   * SIEMPRE armamos un link a nuestro propio `/api/stream/:token` (vía StreamTokenService), no
+   * llamamos a `storage.getSignedReadUrl()` directo — con el driver S3 eso devolvería la URL
+   * firmada del bucket sin pasar por StreamController, y el manifest llegaría sin reescribir
+   * (referencias a segmentos relativas, sin firmar — el player nunca podría reproducir nada).
+   */
   async getPlaybackUrls(id: string, requester: AuthUser) {
     const video = await this.getAuthorized(id, requester);
     if (video.status !== 'READY' || !video.hlsManifestKey) {
       return { status: video.status, manifestUrl: null, thumbnailsVttUrl: null };
     }
-    const manifestUrl = await this.storage.getSignedReadUrl(video.hlsManifestKey, MANIFEST_URL_TTL_SECONDS);
+    const manifestUrl = this.streamTokens.sign(video.hlsManifestKey, MANIFEST_URL_TTL_SECONDS);
     const thumbnailsVttUrl = video.thumbnailVttKey
-      ? await this.storage.getSignedReadUrl(video.thumbnailVttKey, MANIFEST_URL_TTL_SECONDS)
+      ? this.streamTokens.sign(video.thumbnailVttKey, MANIFEST_URL_TTL_SECONDS)
       : null;
     return {
       status: video.status,
