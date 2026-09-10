@@ -13,15 +13,20 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private transporter: nodemailer.Transporter;
   private readonly isMock: boolean;
+  private readonly from: string;
 
   constructor(private config: ConfigService) {
     const host = config.get<string>('SMTP_HOST');
     this.isMock = !host;
+    this.from = config.get<string>('MAIL_FROM', 'LivePlay <no-reply@liveplay.com>');
     this.transporter = this.isMock
       ? nodemailer.createTransport({ jsonTransport: true })
       : nodemailer.createTransport({
           host,
           port: config.get<number>('SMTP_PORT', 587),
+          // Resend (y otros proveedores) exigen STARTTLS explícito en el 587; `secure` solo
+          // debe ser `true` cuando se usa el puerto 465 (TLS directo).
+          secure: config.get<number>('SMTP_PORT', 587) === 465,
           auth: { user: config.get<string>('SMTP_USER'), pass: config.get<string>('SMTP_PASS') },
         });
   }
@@ -34,7 +39,7 @@ export class MailService {
   }
 
   async send(to: string, subject: string, html: string) {
-    const info = await this.transporter.sendMail({ from: 'LIVEPLAY <no-reply@liveplay.com>', to, subject, html });
+    const info = await this.transporter.sendMail({ from: this.from, to, subject, html });
     if (this.isMock) {
       this.logger.log(`[MOCK EMAIL] to=${to} subject="${subject}"\n${html}`);
     }

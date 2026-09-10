@@ -11,12 +11,19 @@ import { VIDEO_PROCESSING_QUEUE } from './video-processing.queue';
     BullModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('REDIS_HOST', 'localhost'),
-          port: config.get<number>('REDIS_PORT', 6379),
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const password = config.get<string>('REDIS_PASSWORD');
+        const useTls = config.get<string>('REDIS_TLS', 'false') === 'true';
+        return {
+          connection: {
+            host: config.get<string>('REDIS_HOST', 'localhost'),
+            port: config.get<number>('REDIS_PORT', 6379),
+            ...(password ? { password } : {}),
+            // Upstash (y la mayoría de los Redis "cloud") exponen el puerto solo con TLS.
+            ...(useTls ? { tls: {} } : {}),
+          },
+        };
+      },
     }),
     BullModule.registerQueue({ name: VIDEO_PROCESSING_QUEUE }),
   ],

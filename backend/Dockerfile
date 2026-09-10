@@ -19,4 +19,8 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/src/db/migrations ./src/db/migrations
 COPY package.json ./
 EXPOSE 3001
-CMD ["node", "dist/main.js"]
+# El compilador (sin nest-cli.json) preserva la carpeta "src" dentro de dist/, así que el
+# entrypoint real queda en dist/src/main.js (no dist/main.js). Se corren las migraciones antes
+# de levantar la API en cada arranque — es idempotente (drizzle registra qué migraciones ya se
+# aplicaron), así que es seguro repetirlo en cada deploy/restart.
+CMD ["sh", "-c", "node dist/src/db/migrate.js && node dist/src/main.js"]
