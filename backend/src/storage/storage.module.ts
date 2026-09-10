@@ -4,6 +4,7 @@ import * as path from 'path';
 import { StorageDriver } from './storage.types';
 import { LocalDiskStorageDriver } from './local-disk.driver';
 import { S3StorageDriver } from './s3.driver';
+import { StreamTokenService } from './stream-token.service';
 
 export const STORAGE_DRIVER = 'STORAGE_DRIVER';
 
@@ -30,7 +31,8 @@ export const STORAGE_DRIVER = 'STORAGE_DRIVER';
         return new LocalDiskStorageDriver(rootDir, secret, publicBaseUrl);
       },
     },
+    StreamTokenService,
   ],
-  exports: [STORAGE_DRIVER],
+  exports: [STORAGE_DRIVER, StreamTokenService],
 })
 export class StorageModule {}
