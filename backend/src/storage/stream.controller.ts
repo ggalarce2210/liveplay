@@ -33,6 +33,7 @@ export class StreamController {
     }
 
     const localPath = this.storage.getLocalPathForRead?.(payload.key);
+    console.log('STREAM_DEBUG key=' + payload.key + ' localPath=' + localPath);
     if (!localPath) throw new NotFoundException('Archivo no encontrado');
 
     let stat;
