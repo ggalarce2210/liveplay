@@ -74,6 +74,7 @@ export class S3StorageDriver implements StorageDriver {
   }
 
   async exists(key: string): Promise<boolean> {
+    console.log('EXISTS_ENTER key=' + key + ' bucket=' + this.bucket);
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
