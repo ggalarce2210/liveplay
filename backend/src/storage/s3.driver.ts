@@ -77,8 +77,8 @@ export class S3StorageDriver implements StorageDriver {
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
-    } catch {
-      return false;
+    } catch (err: any) {
+      console.error('[S3StorageDriver.exists] HeadObject failed key=' + key, err?.name, err?.message, (err as any)?.Code, err?.$metadata?.httpStatusCode); return false;
     }
   }
 
