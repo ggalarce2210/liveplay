@@ -13,7 +13,10 @@ const PLAYER_LINKS = [
   { href: '/dashboard/profile', label: 'Mi perfil', icon: '👤' },
 ];
 
-const ADMIN_LINKS = [{ href: '/admin', label: 'Panel admin', icon: '📊' }];
+const ADMIN_LINKS = [
+  { href: '/admin', label: 'Panel admin', icon: '📊' },
+  { href: '/admin/canchas', label: 'Canchas y camaras', icon: '🎥' },
+];
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -70,7 +73,7 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </div>
         </div>
         <button onClick={onLogout} className="w-full rounded-lg px-3 py-2 text-left text-sm text-ink-400 hover:bg-ink-800/60 hover:text-white">
-          Cerrar sesión
+          Cerrar sesion
         </button>
       </div>
     </aside>
