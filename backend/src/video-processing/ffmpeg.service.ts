@@ -21,13 +21,13 @@ export interface HlsSegmentInfo {
   fileName: string;
 }
 
-const SEGMENT_TARGET_SECONDS = 6; // requisito §11: segmentos cortos, no un archivo único
+const SEGMENT_TARGET_SECONDS = 6; // requisito §11: segmentos cortos, no un archivo unico
 
 /**
- * Envoltorio sobre FFmpeg/FFprobe (§28). Toda la lógica de "video real" del proyecto pasa
- * por acá: metadata, segmentación HLS, sprite de miniaturas + WebVTT, y generación de clips.
- * No usamos una librería intermedia (fluent-ffmpeg) para mantener control total y explícito
- * sobre cada comando — más fácil de auditar y de adaptar a hardware de transcodificación.
+ * Envoltorio sobre FFmpeg/FFprobe (§28). Toda la logica de "video real" del proyecto pasa
+ * por aca: metadata, segmentacion HLS, sprite de miniaturas + WebVTT, y generacion de clips.
+ * No usamos una libreria intermedia (fluent-ffmpeg) para mantener control total y explicito
+ * sobre cada comando - mas facil de auditar y de adaptar a hardware de transcodificacion.
  */
 @Injectable()
 export class FfmpegService {
@@ -55,8 +55,8 @@ export class FfmpegService {
 
   /**
    * Genera un HLS VOD real: manifest .m3u8 + segmentos .ts de ~6s.
-   * `-c copy` evita re-codificar (rápido) cuando el input ya es H.264/AAC; en producción,
-   * para ingesta desde NVR/RTSP con codecs variados, se debería forzar `-c:v libx264 -c:a aac`.
+   * `-c copy` evita re-codificar (rapido) cuando el input ya es H.264/AAC; en produccion,
+   * para ingesta desde NVR/RTSP con codecs variados, se deberia forzar `-c:v libx264 -c:a aac`.
    */
   async generateHls(inputPath: string, outputDir: string): Promise<{ manifestFile: string; segments: HlsSegmentInfo[] }> {
     await fs.mkdir(outputDir, { recursive: true });
@@ -109,7 +109,7 @@ export class FfmpegService {
 
   /**
    * Genera un sprite de miniaturas (grilla de JPEGs) + un WebVTT que mapea tiempo -> recorte
-   * del sprite. Esto es lo que permite la previsualización al arrastrar el scrubber (§12).
+   * del sprite. Esto es lo que permite la previsualizacion al arrastrar el scrubber (§12).
    */
   async generateThumbnailSprite(
     inputPath: string,
@@ -162,7 +162,12 @@ export class FfmpegService {
   /**
    * Genera un clip independiente (mp4) a partir de un rango [startSeconds, endSeconds] del
    * video original, sin modificarlo (§16). Re-codifica (no `-c copy`) para garantizar un
-   * corte preciso al frame solicitado en vez de saltar al keyframe más cercano.
+   * corte preciso al frame solicitado en vez de saltar al keyframe mas cercano.
+   *
+   * `-threads 1`: en la instancia chica de Render donde corre esto, dejar que libx264 use todos
+   * los cores disponibles (default) genero picos de CPU/memoria que llegaron a tirar abajo todo
+   * el proceso (ver nota en VideoProcessingProcessor) - un clip tarda un poco mas asi, pero no
+   * pone en riesgo al resto de la API mientras se genera.
    */
   async generateClip(inputPath: string, startSeconds: number, endSeconds: number, outputPath: string): Promise<void> {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
@@ -175,6 +180,7 @@ export class FfmpegService {
       '-c:v', 'libx264',
       '-c:a', 'aac',
       '-preset', 'veryfast',
+      '-threads', '1',
       outputPath,
     ]);
   }
