@@ -37,7 +37,7 @@ const STAT_CARDS: { key: keyof Stats; label: string; icon: string }[] = [
   { key: 'totalMatches', label: 'Partidos grabados', icon: '🎬' },
   { key: 'recordedHours', label: 'Horas grabadas', icon: '⏱' },
   { key: 'activeCourts', label: 'Canchas activas', icon: '🏟' },
-  { key: 'camerasOnline', label: 'Cámaras online', icon: '📷' },
+  { key: 'camerasOnline', label: 'Camaras online', icon: '📷' },
   { key: 'totalClips', label: 'Clips generados', icon: '⭐' },
 ];
 
@@ -59,8 +59,15 @@ export default function AdminDashboardPage() {
       <AppShell>
         <div>
           <div className="mx-auto max-w-6xl px-6 py-8">
-            <h1 className="text-2xl font-bold text-white">Panel de administración</h1>
-            <p className="mb-6 text-sm text-ink-400">Estadísticas generales, cámaras y almacenamiento.</p>
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-white">Panel de administracion</h1>
+                <p className="text-sm text-ink-400">Estadisticas generales, camaras y almacenamiento.</p>
+              </div>
+              <a href="/admin/canchas" className="btn-secondary">
+                🎥 Canchas y camaras
+              </a>
+            </div>
 
             <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {STAT_CARDS.map((c) => (
@@ -68,7 +75,7 @@ export default function AdminDashboardPage() {
                   <div className="flex items-center gap-3">
                     <span className="text-2xl">{c.icon}</span>
                     <div>
-                      <p className="text-2xl font-bold text-white">{stats ? stats[c.key] : '—'}</p>
+                      <p className="text-2xl font-bold text-white">{stats ? stats[c.key] : '-'}</p>
                       <p className="text-xs text-ink-400">{c.label}</p>
                     </div>
                   </div>
@@ -78,7 +85,7 @@ export default function AdminDashboardPage() {
 
             <div className="mb-8 grid gap-6 lg:grid-cols-2">
               <div className="card p-5">
-                <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-ink-300">Estado de cámaras</h2>
+                <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-ink-300">Estado de camaras</h2>
                 <div className="space-y-2">
                   {cameras.map((cam) => (
                     <div key={cam.id} className="flex items-center justify-between rounded-lg bg-ink-800/50 px-3 py-2 text-sm">
@@ -106,8 +113,8 @@ export default function AdminDashboardPage() {
                     <p className="text-sm text-ink-300">
                       {formatBytes(storage.usedBytes)} / {formatBytes(storage.quotaBytes)}
                     </p>
-                    <p className="mt-3 text-xs text-ink-400">{storage.oldMatchesCount} partidos con más de 90 días (candidatos a política de retención).</p>
-                    <h3 className="mb-2 mt-4 text-xs font-semibold uppercase text-ink-400">Videos más pesados</h3>
+                    <p className="mt-3 text-xs text-ink-400">{storage.oldMatchesCount} partidos con mas de 90 dias (candidatos a politica de retencion).</p>
+                    <h3 className="mb-2 mt-4 text-xs font-semibold uppercase text-ink-400">Videos mas pesados</h3>
                     <div className="space-y-1 text-xs text-ink-300">
                       {storage.heaviestVideos.slice(0, 5).map((v: any) => (
                         <div key={v.id} className="flex justify-between">
