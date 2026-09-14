@@ -145,6 +145,7 @@ export interface Clip {
   startSeconds: number;
   endSeconds: number;
   status: 'PENDING' | 'READY' | 'FAILED';
+  errorMessage?: string | null;
   match?: Match;
 }
 
