@@ -320,7 +320,7 @@ function CourtCard({
 
       <div className="mt-4 border-t border-ink-800 pt-4">
         {court.camera ? (
-          <CameraSummary camera={court.camera} />
+          <CameraSummary camera={court.camera} onDeleted={onChanged} />
         ) : showCameraForm ? (
           <AddCameraForm
             courtId={court.id}
@@ -344,10 +344,12 @@ function CourtCard({
   );
 }
 
-function CameraSummary({ camera }: { camera: Camera }) {
+function CameraSummary({ camera, onDeleted }: { camera: Camera; onDeleted: () => void }) {
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testError, setTestError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function onTestLive() {
     setTesting(true);
@@ -360,6 +362,19 @@ function CameraSummary({ camera }: { camera: Camera }) {
       setTestError(errorMessage(err, 'No pudimos obtener la URL en vivo'));
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function onDelete() {
+    if (!window.confirm(`¿Eliminar la camara "${camera.name}"? Vas a poder vincular una nueva para esta cancha.`)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.delete(`/cameras/${camera.id}`);
+      onDeleted();
+    } catch (err) {
+      setDeleteError(errorMessage(err, 'No pudimos eliminar la camara'));
+      setDeleting(false);
     }
   }
 
@@ -378,22 +393,32 @@ function CameraSummary({ camera }: { camera: Camera }) {
           </p>
         )}
         {camera.rtspUrl && <p className="mt-1 truncate text-xs text-ink-400">{camera.rtspUrl}</p>}
+        {deleteError && <p className="mt-1 text-xs text-red-400">{deleteError}</p>}
       </div>
 
-      {camera.type === 'IMOU_CLOUD' && (
-        <div className="w-full sm:w-auto">
-          <button className="btn-secondary text-sm" onClick={onTestLive} disabled={testing}>
-            {testing ? 'Consultando...' : '▶ Probar en vivo'}
-          </button>
-          {testError && <p className="mt-2 text-xs text-red-400">{testError}</p>}
-          {liveUrl && (
-            <div className="mt-2 max-w-sm rounded-lg bg-ink-800/60 p-2 text-xs text-ink-300">
-              <p className="mb-1 text-ink-400">URL HLS (abrila en VLC u otro reproductor):</p>
-              <p className="break-all font-mono text-pitch-400">{liveUrl}</p>
-            </div>
-          )}
-        </div>
-      )}
+      <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:items-end">
+        {camera.type === 'IMOU_CLOUD' && (
+          <div>
+            <button className="btn-secondary text-sm" onClick={onTestLive} disabled={testing}>
+              {testing ? 'Consultando...' : '▶ Probar en vivo'}
+            </button>
+            {testError && <p className="mt-2 text-xs text-red-400">{testError}</p>}
+            {liveUrl && (
+              <div className="mt-2 max-w-sm rounded-lg bg-ink-800/60 p-2 text-xs text-ink-300">
+                <p className="mb-1 text-ink-400">URL HLS (abrila en VLC u otro reproductor):</p>
+                <p className="break-all font-mono text-pitch-400">{liveUrl}</p>
+              </div>
+            )}
+          </div>
+        )}
+        <button
+          className="text-xs font-semibold text-red-400 hover:text-red-300 disabled:opacity-60"
+          onClick={onDelete}
+          disabled={deleting}
+        >
+          {deleting ? 'Eliminando...' : '🗑 Eliminar camara'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -650,4 +675,3 @@ function GenericCameraForm({ courtId, onCreated, onCancel }: { courtId: string; 
     </form>
   );
 }
-
