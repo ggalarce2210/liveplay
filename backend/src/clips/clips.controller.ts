@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Inject, Param, Post, UseGuards } from '@nestjs/common';
 import { desc, eq } from 'drizzle-orm';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
@@ -50,5 +50,35 @@ export class ClipsController {
     if (clip.status !== 'READY' || !clip.storageKey) return { status: clip.status, url: null };
     const url = await this.storage.getSignedReadUrl(clip.storageKey, 60 * 30);
     return { status: clip.status, url };
+  }
+
+  /**
+   * Reintenta un clip que quedo en FAILED (o que se perdio por un crash del worker antes del
+   * fix de video-processing.processor.ts) sin que el usuario tenga que recrearlo desde cero.
+   */
+  @Audit('CLIP_CREATE', 'Clip')
+  @Post(':id/retry')
+  async retry(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, id) });
+    if (!clip) throw new ForbiddenException();
+    if (clip.createdByUserId !== user.userId) throw new ForbiddenException();
+    const [updated] = await this.db
+      .update(clips)
+      .set({ status: 'PENDING', errorMessage: null, updatedAt: new Date() })
+      .where(eq(clips.id, id))
+      .returning();
+    await this.videoProcessing.enqueueGenerateClip(id);
+    return updated;
+  }
+
+  @Audit('CLIP_DELETE', 'Clip')
+  @Delete(':id')
+  async remove(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, id) });
+    if (!clip) throw new ForbiddenException();
+    if (clip.createdByUserId !== user.userId) throw new ForbiddenException();
+    if (clip.storageKey) await this.storage.deleteObject(clip.storageKey);
+    const [deleted] = await this.db.delete(clips).where(eq(clips.id, id)).returning();
+    return deleted;
   }
 }
