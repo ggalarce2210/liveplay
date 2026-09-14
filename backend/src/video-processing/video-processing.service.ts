@@ -15,8 +15,8 @@ import { VIDEO_PROCESSING_QUEUE, VideoProcessingJobData } from './video-processi
 /**
  * Orquesta el procesamiento de video. Encola trabajos en BullMQ/Redis (§27, §28) para que
  * la ingesta de un partido no bloquee la API. `runProcessMatchVideoNow` ejecuta el mismo
- * pipeline de forma síncrona — se usa en el script de seed/demo cuando no hay un worker
- * separado corriendo, pero en producción SIEMPRE se debe usar la cola.
+ * pipeline de forma sincrona - se usa en el script de seed/demo cuando no hay un worker
+ * separado corriendo, pero en produccion SIEMPRE se debe usar la cola.
  */
 @Injectable()
 export class VideoProcessingService {
@@ -33,12 +33,28 @@ export class VideoProcessingService {
     return this.dbService.db;
   }
 
+  /**
+   * `attempts`/`backoff`: si el proceso se cae a mitad de un job (ver nota en
+   * VideoProcessingProcessor sobre por que esto pasaba con clips), BullMQ lo detecta como
+   * "stalled" y lo vuelve a intentar - sin attempts > 1 esto se agota mucho antes y el job queda
+   * dado por perdido (marcado 'failed' en la cola, pero sin haber corrido de nuevo). Con 3
+   * intentos y backoff exponencial le damos margen a que la instancia se recupere entre uno y
+   * otro antes de rendirse definitivamente (y ahi es cuando entra el listener de 'failed').
+   */
   async enqueueProcessMatchVideo(videoId: string, sourceFilePath: string) {
-    await this.queue.add('process-match-video', { type: 'process-match-video', videoId, sourceFilePath });
+    await this.queue.add(
+      'process-match-video',
+      { type: 'process-match-video', videoId, sourceFilePath },
+      { attempts: 3, backoff: { type: 'exponential', delay: 15_000 } },
+    );
   }
 
   async enqueueGenerateClip(clipId: string) {
-    await this.queue.add('generate-clip', { type: 'generate-clip', clipId });
+    await this.queue.add(
+      'generate-clip',
+      { type: 'generate-clip', clipId },
+      { attempts: 3, backoff: { type: 'exponential', delay: 15_000 } },
+    );
   }
 
   async runProcessMatchVideoNow(videoId: string, sourceFilePath: string) {
@@ -109,9 +125,10 @@ export class VideoProcessingService {
             height: probeResult.height,
             fps: probeResult.fps,
             sizeBytes,
+            updatedAt: new Date(),
           })
           .where(eq(videos.id, videoId));
-        await tx.update(matches).set({ status: 'READY' }).where(eq(matches.id, video.matchId));
+        await tx.update(matches).set({ status: 'READY', updatedAt: new Date() }).where(eq(matches.id, video.matchId));
       });
 
       const match = await this.db.query.matches.findFirst({ where: eq(matches.id, video.matchId), with: { players: true } });
@@ -122,7 +139,7 @@ export class VideoProcessingService {
             userIds.map((userId) => ({
               userId,
               type: 'MATCH_READY' as const,
-              title: 'Tu partido ya está disponible',
+              title: 'Tu partido ya esta disponible',
               body: `Tu partido del ${match.date} ya puede reproducirse.`,
               metadata: { matchId: match.id },
             })),
@@ -132,9 +149,9 @@ export class VideoProcessingService {
 
       this.logger.log(`Video ${videoId} procesado: ${segments.length} segmentos, ${probeResult.durationSeconds.toFixed(1)}s`);
     } catch (err) {
-      this.logger.error(`Falló el procesamiento del video ${videoId}`, err as Error);
-      await this.db.update(videos).set({ status: 'FAILED', errorMessage: String(err) }).where(eq(videos.id, videoId));
-      await this.db.update(matches).set({ status: 'FAILED' }).where(eq(matches.id, video.matchId));
+      this.logger.error(`Fallo el procesamiento del video ${videoId}`, err as Error);
+      await this.db.update(videos).set({ status: 'FAILED', errorMessage: String(err), updatedAt: new Date() }).where(eq(videos.id, videoId));
+      await this.db.update(matches).set({ status: 'FAILED', updatedAt: new Date() }).where(eq(matches.id, video.matchId));
       throw err;
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
@@ -145,7 +162,7 @@ export class VideoProcessingService {
     const { clipId } = job;
     const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, clipId), with: { match: { with: { video: true } } } });
     if (!clip) throw new Error(`Clip ${clipId} no encontrado`);
-    if (!clip.match.video?.hlsManifestKey) throw new Error('El partido todavía no tiene video procesado');
+    if (!clip.match.video?.hlsManifestKey) throw new Error('El partido todavia no tiene video procesado');
 
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ecp-clip-'));
     try {
@@ -154,6 +171,9 @@ export class VideoProcessingService {
         where: and(eq(videoSegments.videoId, video.id), gt(videoSegments.endOffsetSeconds, clip.startSeconds), lt(videoSegments.startOffsetSeconds, clip.endSeconds)),
         orderBy: [asc(videoSegments.index)],
       });
+      if (!segments.length) {
+        throw new Error(`No hay segmentos de video que cubran el rango ${clip.startSeconds}s-${clip.endSeconds}s`);
+      }
       const concatListPath = path.join(tmpDir, 'concat.txt');
       const localPaths: string[] = [];
       for (const seg of segments) {
@@ -179,9 +199,10 @@ export class VideoProcessingService {
       const key = `clips/${clip.matchId}/${clip.id}.mp4`;
       await this.storage.putObject({ key, filePath: outputPath, contentType: 'video/mp4' });
 
-      await this.db.update(clips).set({ status: 'READY', storageKey: key }).where(eq(clips.id, clipId));
+      await this.db.update(clips).set({ status: 'READY', storageKey: key, updatedAt: new Date() }).where(eq(clips.id, clipId));
     } catch (err) {
-      await this.db.update(clips).set({ status: 'FAILED', errorMessage: String(err) }).where(eq(clips.id, clipId));
+      this.logger.error(`Fallo la generacion del clip ${clipId}`, err as Error);
+      await this.db.update(clips).set({ status: 'FAILED', errorMessage: String(err), updatedAt: new Date() }).where(eq(clips.id, clipId));
       throw err;
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
