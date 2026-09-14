@@ -1,5 +1,7 @@
 export type Role = 'SUPER_ADMIN' | 'COMPLEX_ADMIN' | 'PLAYER';
 export type SportType = 'FUTBOL5' | 'PADEL';
+export type CourtStatus = 'ACTIVE' | 'MAINTENANCE' | 'INACTIVE';
+export type CameraType = 'IP_CAMERA' | 'RTSP' | 'NVR' | 'DVR' | 'IMOU_CLOUD';
 export type MatchStatus = 'SCHEDULED' | 'RECORDING' | 'PROCESSING' | 'READY' | 'FAILED';
 export type VideoStatus = 'PENDING' | 'PROCESSING' | 'READY' | 'FAILED';
 export type EventType = 'GOAL' | 'YELLOW_CARD' | 'RED_CARD' | 'GREAT_SAVE' | 'HIGHLIGHT' | 'SET_POINT' | 'CUSTOM';
@@ -25,19 +27,35 @@ export interface Complex {
 
 export interface Court {
   id: string;
+  complexId?: string;
   name: string;
   sportType: SportType;
-  status: string;
+  status: CourtStatus | string;
+  location?: string | null;
   complex?: Complex;
   camera?: Camera | null;
 }
 
 export interface Camera {
   id: string;
+  courtId?: string;
   name: string;
-  type: string;
+  type: CameraType | string;
   status: 'ONLINE' | 'OFFLINE' | 'UNKNOWN';
   lastSeenAt?: string | null;
+  rtspUrl?: string | null;
+  nvrChannel?: number | null;
+  imouDeviceId?: string | null;
+  imouChannelId?: string | null;
+  court?: Court;
+}
+
+/** Dispositivo que el Imou Open Platform ya reconoce como vinculado/compartido a nuestra appId
+ * (GET /cameras/imou/devices) - ver backend/src/cameras/imou-cloud.client.ts. */
+export interface ImouDevice {
+  bindId: number;
+  deviceId: string;
+  channels: { channelId: string; channelName: string }[];
 }
 
 export interface Team {
@@ -47,7 +65,7 @@ export interface Team {
   setsWon?: number | null;
 }
 
-/** Resultado liviano del buscador público (GET /discovery/matches) — sin datos personales de
+/** Resultado liviano del buscador publico (GET /discovery/matches) - sin datos personales de
  * jugadores ni URLs de video, ver backend/src/discovery/discovery.service.ts. */
 export interface PublicMatchSummary {
   id: string;
