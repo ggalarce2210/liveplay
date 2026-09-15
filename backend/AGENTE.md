@@ -36,6 +36,36 @@ Es el mismo par de scripts sea cual sea el hardware - lo unico que cambia entre 
 Android y una Raspberry/mini PC es *quien los arranca al prender el equipo* (Termux:Boot vs.
 systemd), ver mas abajo.
 
+## Camaras Dahua/Imou: RTSP directo cuando estan en la misma red (recomendado)
+
+Si la camara (aunque sea marca Dahua o Imou) esta en la **misma red local** que el dispositivo
+que corre este agente - el caso tipico de una cancha propia -, **no hace falta pasar por Imou
+Cloud**: esa integracion (ver el resumen del proyecto, seccion "Integracion de camaras
+Dahua/Imou") es solo para el caso en el que la camara *no* esta en la red del backend/agente,
+sino asociada a una cuenta cloud. Con la camara en la misma red, conviene siempre RTSP directo
+con este agente - es mas simple, no depende de un tercero (Imou), y no tiene el limite de una
+sesion de streaming en vivo a la vez.
+
+Las camaras Dahua (y la mayoria de las marcas que reusan su firmware/OEM) exponen RTSP en el
+puerto 554 con este formato de URL:
+
+```
+rtsp://usuario:clave@IP-DE-LA-CAMARA:554/cam/realmonitor?channel=N&subtype=0
+```
+
+- `channel`: el numero de camara - `1` si es una camara IP standalone, o el numero de puerto
+  correspondiente si el video sale de un NVR con varias camaras conectadas.
+- `subtype`: `0` = stream principal (mejor calidad - recomendado para grabar, ya que
+  `record.sh` no recodifica y esa va a ser la calidad final del clip), `1` = substream (mas
+  liviano, util solo si la red del dispositivo no aguanta el stream principal).
+- Usuario/clave: los mismos que usas para entrar a la camara por su app o interfaz web (no son
+  las credenciales de la cuenta Imou Cloud, que aca no hace falta).
+
+Esa URL es la que va en `RTSP_URL` dentro de `config.env` (ver
+[`../local-agent/config.example.env`](../local-agent/config.example.env)) y tambien la que se
+carga al agregar la camara en `/admin/canchas` eligiendo el modo **"RTSP / IP / NVR / DVR"**
+(no "Imou Cloud").
+
 ## Paso 1: generar el token de la camara (desde el panel de admin)
 
 Cada camara necesita su propio token. Se genera una sola vez desde el panel
