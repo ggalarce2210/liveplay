@@ -26,4 +26,3 @@ log() {
   local scope="$1"; shift
   echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] [$scope] $*"
 }
-
