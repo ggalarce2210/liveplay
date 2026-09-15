@@ -1,0 +1,20 @@
+# Instalacion en Raspberry Pi / mini PC con systemd (NO se usa en Termux, ahi es
+# termux-boot-start.sh el que arranca todo). Copiar a /etc/systemd/system/ y ajustar
+# WorkingDirectory/User, luego:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now liveplay-agent-record.service
+[Unit]
+Description=LivePlay agente local - grabacion continua RTSP
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/liveplay-repo/local-agent
+ExecStart=/home/pi/liveplay-repo/local-agent/record.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
