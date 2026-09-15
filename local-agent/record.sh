@@ -21,30 +21,29 @@ load_agent_config || exit 1
 
 if ! command -v ffmpeg >/dev/null 2>&1; then
   log record "ffmpeg no esta instalado. En Termux: pkg install ffmpeg. Abortando."
-    exit 1
-    fi
+  exit 1
+fi
 
-    if [ -z "${RTSP_URL:-}" ] || [ "$RTSP_URL" = "rtsp://usuario:clave@192.168.1.50:554/stream1" ]; then
-      log record "RTSP_URL no esta configurada (revisa $DIR/config.env). Abortando."
-        exit 1
-        fi
+if [ -z "${RTSP_URL:-}" ] || [ "$RTSP_URL" = "rtsp://usuario:clave@192.168.1.50:554/stream1" ]; then
+  log record "RTSP_URL no esta configurada (revisa $DIR/config.env). Abortando."
+  exit 1
+fi
 
-        log record "Arrancando grabacion continua de $RTSP_URL en segmentos de ${SEGMENT_SECONDS}s -> $RECORDINGS_DIR"
+log record "Arrancando grabacion continua de $RTSP_URL en segmentos de ${SEGMENT_SECONDS}s -> $RECORDINGS_DIR"
 
-        # TZ=UTC es clave: asi el nombre de archivo (%Y-%m-%dT%H-%M-%S via -strftime 1) queda en
-        # UTC, que es como el backend guarda/devuelve startTime/endTime de los partidos (timestamptz
-        # -> JSON siempre en UTC). Sin esto, uploader.py tendria que lidiar con el huso horario del
-        # dispositivo, que en un TV box puede estar mal configurado o cambiar solo.
-        while true; do
-          TZ=UTC ffmpeg -hide_banner -loglevel warning \
-              -rtsp_transport tcp \
-                  -i "$RTSP_URL" \
-                      -c copy \
-                          -f segment -segment_time "$SEGMENT_SECONDS" -reset_timestamps 1 -strftime 1 \
-                              "$RECORDINGS_DIR/%Y-%m-%dT%H-%M-%S.mp4" \
-                                  >> "$LOG_DIR/record.log" 2>&1
+# TZ=UTC es clave: asi el nombre de archivo (%Y-%m-%dT%H-%M-%S via -strftime 1) queda en
+# UTC, que es como el backend guarda/devuelve startTime/endTime de los partidos (timestamptz
+# -> JSON siempre en UTC). Sin esto, uploader.py tendria que lidiar con el huso horario del
+# dispositivo, que en un TV box puede estar mal configurado o cambiar solo.
+while true; do
+  TZ=UTC ffmpeg -hide_banner -loglevel warning \
+    -rtsp_transport tcp \
+    -i "$RTSP_URL" \
+    -c copy \
+    -f segment -segment_time "$SEGMENT_SECONDS" -reset_timestamps 1 -strftime 1 \
+    "$RECORDINGS_DIR/%Y-%m-%dT%H-%M-%S.mp4" \
+    >> "$LOG_DIR/record.log" 2>&1
 
-                                    log record "ffmpeg termino/se corto (revisa $LOG_DIR/record.log) - reintentando en 5s..."
-                                      sleep 5
-                                      done
-                                      
+  log record "ffmpeg termino/se corto (revisa $LOG_DIR/record.log) - reintentando en 5s..."
+  sleep 5
+done
