@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# --------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────
 # Grabacion continua de la camara RTSP de esta cancha, en segmentos de SEGMENT_SECONDS,
 # con nombre = su hora de inicio en UTC ("2026-09-14T20-05-00.mp4"). No transcodifica
 # (-c copy): solo copia el stream tal cual viene de la camara, asi que el uso de CPU es
@@ -11,7 +11,7 @@
 # Si ffmpeg se cae (wifi, la camara se reinicia, etc.) este script lo vuelve a levantar
 # solo cada 5s - pensado para dejarlo corriendo para siempre (ver termux-boot/start-agent.sh
 # o systemd/liveplay-agent-record.service).
-# --------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +24,7 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ -z "${RTSP_URL:-}" ] || [ "$RTSP_URL" = "rtsp://usuario:clave@192.168.1.50:554/stream1" ]; then
+if [ -z "${RTSP_URL:-}" ] || [ "$RTSP_URL" = "rtsp://admin:clave@192.168.1.50:554/cam/realmonitor?channel=1&subtype=0" ]; then
   log record "RTSP_URL no esta configurada (revisa $DIR/config.env). Abortando."
   exit 1
 fi
