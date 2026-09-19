@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { asc, eq } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { videos } from '../db/schema';
@@ -23,9 +23,13 @@ export class VideosService {
       },
     });
     if (!video) throw new NotFoundException('Video no encontrado');
-    if (requester.role === 'PLAYER' && !video.match.players.some((p) => p.userId === requester.userId)) {
-      throw new ForbiddenException('No tenés acceso a este video');
-    }
+    // Antes esto exigía que el PLAYER estuviera en `match.players` para poder ver el video.
+    // Igual que en `MatchesService.search` (ver comentario ahí, 2026-09-19): desde que los
+    // partidos se generan solos por horario de turno nadie asigna jugadores nunca, así que esta
+    // restricción le bloqueaba el video a TODOS los jugadores, siempre — el video quedaba
+    // visible solo para SUPER_ADMIN/COMPLEX_ADMIN, que ya estaban exceptuados de este chequeo.
+    // Decisión del cliente: cualquier usuario logueado puede ver cualquier turno grabado, mismo
+    // criterio para los tres roles.
     return video;
   }
 
