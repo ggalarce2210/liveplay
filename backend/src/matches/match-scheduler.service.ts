@@ -3,6 +3,9 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { courts, matches } from '../db/schema';
+import { zonedTimeToUtc } from '../common/timezone';
+
+const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
 
 /**
  * Forma esperada de `courts.operatingHours` (jsonb) cuando se usa para generar partidos
@@ -53,12 +56,16 @@ export class MatchSchedulerService {
    */
   @Cron(CronExpression.EVERY_HOUR)
   async ensureUpcomingMatches() {
-    const activeCourts = await this.db.query.courts.findMany({ where: eq(courts.status, 'ACTIVE') });
+    const activeCourts = await this.db.query.courts.findMany({
+      where: eq(courts.status, 'ACTIVE'),
+      with: { complex: true },
+    });
     let created = 0;
     for (const court of activeCourts) {
       const schedule = court.operatingHours as CourtTurnSchedule | null;
       if (!hasValidSchedule(schedule)) continue;
-      created += await this.ensureUpcomingMatchesForCourt(court.id, court.complexId, court.sportType, schedule);
+      const timezone = court.complex?.timezone || DEFAULT_TIMEZONE;
+      created += await this.ensureUpcomingMatchesForCourt(court.id, court.complexId, court.sportType, schedule, timezone);
     }
     if (created > 0) this.logger.log(`Generados ${created} turnos automáticos.`);
     return created;
@@ -70,11 +77,12 @@ export class MatchSchedulerService {
    * próxima vuelta del cron (hasta una hora).
    */
   async generateForCourt(courtId: string) {
-    const court = await this.db.query.courts.findFirst({ where: eq(courts.id, courtId) });
+    const court = await this.db.query.courts.findFirst({ where: eq(courts.id, courtId), with: { complex: true } });
     if (!court) return 0;
     const schedule = court.operatingHours as CourtTurnSchedule | null;
     if (!hasValidSchedule(schedule)) return 0;
-    return this.ensureUpcomingMatchesForCourt(court.id, court.complexId, court.sportType, schedule);
+    const timezone = court.complex?.timezone || DEFAULT_TIMEZONE;
+    return this.ensureUpcomingMatchesForCourt(court.id, court.complexId, court.sportType, schedule, timezone);
   }
 
   private async ensureUpcomingMatchesForCourt(
@@ -82,13 +90,17 @@ export class MatchSchedulerService {
     complexId: string,
     sportType: 'FUTBOL5' | 'PADEL',
     schedule: CourtTurnSchedule,
+    timezone: string,
   ) {
+    // Estas dos fechas solo se usan como límites de búsqueda ("¿hasta cuándo ya hay turnos
+    // generados?"), no representan un horario de turno puntual — no hace falta que estén
+    // ajustadas al minuto exacto del huso horario del complejo, alcanza con no quedar cortos.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const horizonEnd = new Date(today);
     horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
 
-    const slots = this.buildSlots(today, horizonEnd, schedule);
+    const slots = this.buildSlots(today, horizonEnd, schedule, timezone);
     if (slots.length === 0) return 0;
 
     // Se compara por `startTime` exacto para no duplicar turnos ya generados en una vuelta
@@ -106,7 +118,7 @@ export class MatchSchedulerService {
         complexId,
         courtId,
         sportType,
-        date: this.formatDate(s.startTime),
+        date: s.date,
         startTime: s.startTime,
         endTime: s.endTime,
         status: 'SCHEDULED' as const,
@@ -118,29 +130,35 @@ export class MatchSchedulerService {
   }
 
   /**
-   * Nota de timezone: igual que el resto del código de fechas de este proyecto (ver
-   * `matches.service.ts` `startOfDay`/`endOfDay`), esto trabaja con la hora local del server
-   * en vez de convertir explícitamente por `complexes.timezone`. Para un solo país/huso
-   * horario (el caso de este cliente) es correcto; si en el futuro hay complejos en husos
-   * horarios distintos del server, esto necesita usar una librería de timezone (ver
-   * ARCHITECTURE.md).
+   * Arma la grilla de turnos entre `from` y `to` (ambos límites de búsqueda, ver más arriba)
+   * convirtiendo cada "hora de pared" (`turnStart`..`turnEnd` tal como los carga el cliente,
+   * en la hora real del complejo) al instante UTC que corresponde según `timezone` — antes esto
+   * se armaba con `Date.setHours`, que es local AL SERVIDOR (UTC en producción) y no al
+   * complejo, generando turnos desfasados 3hs contra el horario real (ver `common/timezone.ts`).
+   *
+   * `date` (el día "de calendario" al que pertenece el turno, para agrupar/mostrar) se guarda
+   * tal cual el día que se está iterando, no derivado del instante UTC ya convertido — así un
+   * turno que arranca tarde en la noche sigue perteneciendo al día en que el cliente lo espera,
+   * aunque su instante UTC caiga después de medianoche.
    */
-  private buildSlots(from: Date, to: Date, schedule: CourtTurnSchedule) {
+  private buildSlots(from: Date, to: Date, schedule: CourtTurnSchedule, timezone: string) {
     const openDays = new Set(schedule.openDays);
     const [startH, startM] = schedule.turnStart.split(':').map(Number);
     const [endH, endM] = schedule.turnEnd.split(':').map(Number);
     const startMinutes = startH * 60 + startM;
     const lastTurnStartMinutes = endH * 60 + endM;
-    const slots: { startTime: Date; endTime: Date }[] = [];
+    const slots: { startTime: Date; endTime: Date; date: string }[] = [];
 
     for (let day = new Date(from); day < to; day.setDate(day.getDate() + 1)) {
       const isoWeekday = ((day.getDay() + 6) % 7) + 1; // JS: 0=domingo..6=sábado -> ISO: 1=lunes..7=domingo
       if (!openDays.has(isoWeekday)) continue;
+      const dateStr = this.formatDate(day);
       for (let m = startMinutes; m <= lastTurnStartMinutes; m += schedule.turnDurationMinutes) {
-        const startTime = new Date(day);
-        startTime.setHours(0, m, 0, 0); // Date normaliza minutos > 59 solo, sin problema.
+        const hh = String(Math.floor(m / 60)).padStart(2, '0');
+        const mm = String(m % 60).padStart(2, '0');
+        const startTime = zonedTimeToUtc(dateStr, `${hh}:${mm}`, timezone);
         const endTime = new Date(startTime.getTime() + schedule.turnDurationMinutes * 60_000);
-        slots.push({ startTime, endTime });
+        slots.push({ startTime, endTime, date: dateStr });
       }
     }
     return slots;
