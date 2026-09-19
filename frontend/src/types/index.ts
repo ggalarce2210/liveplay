@@ -22,6 +22,7 @@ export interface Complex {
   name: string;
   address?: string | null;
   city?: string | null;
+  timezone?: string;
   courts?: Court[];
 }
 
