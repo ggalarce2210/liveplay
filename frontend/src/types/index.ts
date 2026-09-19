@@ -25,6 +25,17 @@ export interface Complex {
   courts?: Court[];
 }
 
+/** Horario fijo de turnos de una cancha — ver `MatchSchedulerService` en el backend. */
+export interface CourtOperatingHours {
+  /** 1=lunes ... 7=domingo */
+  openDays: number[];
+  /** "HH:MM" (24hs) */
+  turnStart: string;
+  /** "HH:MM" (24hs) — hora de INICIO del último turno del día, no de cierre */
+  turnEnd: string;
+  turnDurationMinutes: number;
+}
+
 export interface Court {
   id: string;
   complexId?: string;
@@ -32,6 +43,7 @@ export interface Court {
   sportType: SportType;
   status: CourtStatus | string;
   location?: string | null;
+  operatingHours?: CourtOperatingHours | null;
   complex?: Complex;
   camera?: Camera | null;
 }
@@ -51,7 +63,7 @@ export interface Camera {
 }
 
 /** Dispositivo que el Imou Open Platform ya reconoce como vinculado/compartido a nuestra appId
- * (GET /cameras/imou/devices) - ver backend/src/cameras/imou-cloud.client.ts. */
+ * (GET /cameras/imou/devices) — ver backend/src/cameras/imou-cloud.client.ts. */
 export interface ImouDevice {
   bindId: number;
   deviceId: string;
@@ -65,7 +77,7 @@ export interface Team {
   setsWon?: number | null;
 }
 
-/** Resultado liviano del buscador publico (GET /discovery/matches) - sin datos personales de
+/** Resultado liviano del buscador público (GET /discovery/matches) — sin datos personales de
  * jugadores ni URLs de video, ver backend/src/discovery/discovery.service.ts. */
 export interface PublicMatchSummary {
   id: string;
