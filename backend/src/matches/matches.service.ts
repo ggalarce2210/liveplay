@@ -98,6 +98,16 @@ export class MatchesService {
       });
     }
 
+    // Decisión del cliente (2026-09-19, reunión con el club): el buscador es para revisar
+    // partidos ya grabados, no para mostrar el calendario completo de turnos. Desde que los
+    // turnos se generan solos por horario (ver MatchSchedulerService) la enorme mayoría de los
+    // resultados eran turnos "Programado" sin video todavía — ruido que tapaba el partido que
+    // el usuario realmente buscaba. Se filtran acá (después de los demás filtros, así no hay
+    // que tocar la lógica de arriba): solo se devuelven partidos con un video ya asociado. Si
+    // en el futuro se quiere un buscador de turnos disponibles para reservar, es un endpoint
+    // aparte — no reutilizar este quitando el filtro.
+    result = result.filter((m) => !!m.video);
+
     return result;
   }
 
