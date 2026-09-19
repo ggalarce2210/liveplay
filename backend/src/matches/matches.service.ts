@@ -5,6 +5,9 @@ import { matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 import { SearchMatchesDto } from './dto/search-matches.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { formatInTimeZone } from '../common/timezone';
+
+const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
 
 function startOfDay(d: Date) {
   const x = new Date(d);
@@ -80,11 +83,15 @@ export class MatchesService {
       orderBy: [desc(matches.startTime)],
     });
 
+    // OJO timezone: `m.startTime` es un instante UTC; `Date.getHours()`/`getMinutes()` devuelven
+    // la hora LOCAL AL SERVIDOR (UTC en producción), no la del complejo — comparar eso contra un
+    // horario que el usuario tipeó pensando en la hora real de la cancha (ej. "08:00") quedaba
+    // desalineado en 3hs contra lo que la UI le mostraba para ese mismo partido. Se formatea en
+    // el huso horario del complejo (`m.complex.timezone`, con fallback al único huso que maneja
+    // este cliente) para que coincida con lo que ve el usuario en pantalla.
     if (query.timeFrom || query.timeTo) {
       result = result.filter((m) => {
-        const hh = String(m.startTime.getHours()).padStart(2, '0');
-        const mm = String(m.startTime.getMinutes()).padStart(2, '0');
-        const t = `${hh}:${mm}`;
+        const t = formatInTimeZone(m.startTime, m.complex?.timezone || DEFAULT_TIMEZONE);
         if (query.timeFrom && t < query.timeFrom) return false;
         if (query.timeTo && t > query.timeTo) return false;
         return true;
