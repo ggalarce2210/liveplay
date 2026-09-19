@@ -1,5 +1,5 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, lte } from 'drizzle-orm';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
@@ -34,12 +34,13 @@ export class MatchesService {
   async search(query: SearchMatchesDto, requester: AuthUser) {
     const conditions = [] as any[];
 
-    if (requester.role === 'PLAYER') {
-      const rows = await this.db.query.matchPlayers.findMany({ where: eq(matchPlayers.userId, requester.userId), columns: { matchId: true } });
-      const matchIds = rows.map((r) => r.matchId);
-      if (matchIds.length === 0) return [];
-      conditions.push(inArray(matches.id, matchIds));
-    }
+    // Antes esto acotaba la búsqueda de un PLAYER a solo los partidos donde alguien lo había
+    // asignado a mano en `matchPlayers`. Desde que los partidos se generan solos por horario
+    // de turno (ver MatchSchedulerService, 2026-09-19) nadie asigna jugadores nunca, así que
+    // esa restricción dejaba la búsqueda vacía para siempre. Decisión del cliente: cualquier
+    // jugador logueado puede buscar y ver cualquier turno grabado (mismo criterio que ya
+    // aplicaba para SUPER_ADMIN/COMPLEX_ADMIN) — ver discusión en el chat del 2026-09-19.
+    // Si en el futuro se quiere volver a acotar (ej. con un código por turno), es acá.
 
     if (query.complexId) conditions.push(eq(matches.complexId, query.complexId));
     if (query.courtId) conditions.push(eq(matches.courtId, query.courtId));
@@ -106,16 +107,7 @@ export class MatchesService {
       },
     });
     if (!match) throw new NotFoundException('Partido no encontrado');
-    this.assertCanAccess(match, requester);
     return match;
-  }
-
-  /** Un jugador solo puede acceder a los partidos donde figura como jugador (§25). */
-  private assertCanAccess(match: { players: { userId: string | null }[] }, requester: AuthUser) {
-    if (requester.role === 'PLAYER') {
-      const isPlayer = match.players.some((p) => p.userId === requester.userId);
-      if (!isPlayer) throw new ForbiddenException('No tenés acceso a este partido');
-    }
   }
 
   async create(data: any) {
