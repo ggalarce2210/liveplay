@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -28,6 +29,9 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Habilita @Cron(...) en cualquier servicio — usado hoy por MatchSchedulerService para
+    // mantener siempre generada la grilla de próximos turnos por cancha (ver ese archivo).
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     DbModule,
     StorageModule,
