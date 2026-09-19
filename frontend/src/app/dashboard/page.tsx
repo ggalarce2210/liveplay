@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
-import { Match, Court } from '@/types';
+import { Match, Complex } from '@/types';
 import MatchCard from '@/components/MatchCard';
 import SearchFilters, { Filters } from '@/components/SearchFilters';
 
@@ -10,7 +10,7 @@ const DEFAULT_FILTERS: Filters = { datePreset: '', useCustomDate: false, useRang
 
 export default function DashboardPage() {
   const [matches, setMatches] = useState<Match[] | null>(null);
-  const [courts, setCourts] = useState<Court[]>([]);
+  const [complexes, setComplexes] = useState<Complex[]>([]);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,6 +23,7 @@ export default function DashboardPage() {
     } else if (filters.datePreset) params.set('datePreset', filters.datePreset);
 
     if (filters.sportType) params.set('sportType', filters.sportType);
+    if (filters.complexId) params.set('complexId', filters.complexId);
     if (filters.courtId) params.set('courtId', filters.courtId);
     if (filters.timeFrom) params.set('timeFrom', filters.timeFrom);
     if (filters.timeTo) params.set('timeTo', filters.timeTo);
@@ -41,17 +42,22 @@ export default function DashboardPage() {
     };
   }, [queryString]);
 
+  // Complejos (con sus canchas ya anidadas) para los selects de "Complejo"/"Cancha" del
+  // filtro — se piden aparte de /matches, filtrados por deporte, en vez de deducirlos de los
+  // resultados: así el filtro siempre puede elegir cualquier complejo/cancha existente, no
+  // solo los que ya tienen partidos cargados en la búsqueda actual.
   useEffect(() => {
-    const courtIds = new Set<string>();
-    const uniqueCourts: Court[] = [];
-    (matches ?? []).forEach((m) => {
-      if (m.court && !courtIds.has(m.court.id)) {
-        courtIds.add(m.court.id);
-        uniqueCourts.push(m.court);
-      }
-    });
-    if (uniqueCourts.length) setCourts((prev) => (prev.length ? prev : uniqueCourts));
-  }, [matches]);
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (filters.sportType) params.set('sportType', filters.sportType);
+    api
+      .get<Complex[]>(`/complexes${params.toString() ? `?${params.toString()}` : ''}`)
+      .then((data) => !cancelled && setComplexes(data))
+      .catch(() => !cancelled && setComplexes([]));
+    return () => {
+      cancelled = true;
+    };
+  }, [filters.sportType]);
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
@@ -63,7 +69,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="mb-6">
-        <SearchFilters filters={filters} onChange={setFilters} courts={courts} />
+        <SearchFilters filters={filters} onChange={setFilters} complexes={complexes} />
       </div>
 
       {error && <p className="rounded-lg bg-red-500/10 px-4 py-3 text-sm text-red-400">{error}</p>}
