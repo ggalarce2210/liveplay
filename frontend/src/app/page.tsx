@@ -26,7 +26,9 @@ export default function LandingPage() {
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-3">
-          <LogoMark className="h-12 w-12 shrink-0 rounded-xl shadow-glow sm:h-14 sm:w-14" />
+          <div style={{ animation: 'lp-kick-in 0.85s cubic-bezier(.22,1.4,.36,1) both, lp-glow-pulse 3.2s ease-in-out 0.9s infinite' }}>
+            <LogoMark className="h-12 w-12 shrink-0 sm:h-14 sm:w-14" />
+          </div>
           <span className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             Live<span className="text-pitch-400">Play</span>
           </span>
@@ -44,18 +46,35 @@ export default function LandingPage() {
       </header>
 
       <section className="relative z-10 mx-auto flex max-w-4xl flex-col items-center px-6 pb-10 pt-10 text-center sm:pt-14">
-        <span className="badge border border-pitch-500/40 bg-pitch-500/10 text-pitch-400">Jugá. Grabá. Reviví.</span>
-        <h1 className="mt-6 text-4xl font-black tracking-tight text-white sm:text-6xl">
+        <span
+          className="badge border border-pitch-500/40 bg-pitch-500/10 text-pitch-400"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.1s both' }}
+        >
+          Jugá. Grabá. Reviví.
+        </span>
+        <h1
+          className="mt-6 text-4xl font-black tracking-tight text-white sm:text-6xl"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.2s both' }}
+        >
           REVIVÍ <span className="text-pitch-400">CADA PARTIDO</span>
         </h1>
-        <p className="mt-5 max-w-xl text-balance text-lg text-ink-300">
+        <p
+          className="mt-5 max-w-xl text-balance text-lg text-ink-300"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.32s both' }}
+        >
           Guardamos tus partidos de Fútbol 5 y Pádel para que puedas volver a vivir cada jugada, desde el celular o la computadora.
         </p>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
+        <div
+          className="mt-8 flex flex-wrap items-center justify-center gap-4"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.44s both' }}
+        >
           <a href="#buscar" className="btn-primary px-7 py-3 text-base">🔎 Buscar mi partido</a>
           <Link href="/register" className="btn-secondary px-7 py-3 text-base">Registrarme</Link>
         </div>
-        <p className="mt-3 text-sm text-ink-400">
+        <p
+          className="mt-3 text-sm text-ink-400"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.54s both' }}
+        >
           <Link href="/login" className="underline hover:text-white">¿Ya tenés cuenta? Iniciá sesión</Link>
         </p>
       </section>
