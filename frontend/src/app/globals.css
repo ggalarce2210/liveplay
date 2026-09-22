@@ -68,14 +68,17 @@
   }
 }
 /* Reutiliza el "pique" del isotipo en IntroSplash (§ver ese componente) para que el logo del
-   header de la home tenga la misma entrada animada en vez de aparecer estático de golpe. */
+   header de la home tenga la misma entrada animada en vez de aparecer estático de golpe.
+   El glow es rojo (no verde) a propósito: al sacar el punto "REC" fijo de LogoMark (ver ese
+   componente, 2026-09-22), la idea de "grabando/en vivo" queda transmitida por este pulso sutil
+   en vez de por un elemento estático — sólo se usa acá, en el logo grande del header de la home. */
 @keyframes lp-glow-pulse {
   0%,
   100% {
-    filter: drop-shadow(0 0 14px rgba(47, 154, 82, 0.35));
+    filter: drop-shadow(0 0 12px rgba(239, 68, 68, 0.3));
   }
   50% {
-    filter: drop-shadow(0 0 24px rgba(47, 154, 82, 0.55));
+    filter: drop-shadow(0 0 22px rgba(239, 68, 68, 0.5));
   }
 }
 
