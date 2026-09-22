@@ -81,6 +81,53 @@
     filter: drop-shadow(0 0 22px rgba(239, 68, 68, 0.5));
   }
 }
+/* "REC" chico en la esquina del logo del header de la home, con un parpadeo irregular (no un
+   fade suave) para que se sienta como interferencia de señal y no como una animación prolija
+   (pedido del cliente, 2026-09-22) — steps(1) hace que cada corte de opacidad sea un salto seco
+   en vez de una transición. Solo vive en el header grande de la home (ver page.tsx); el resto
+   de los usos de LogoMark quedan sin este texto porque a esos tamaños (28-32px) es ilegible. */
+@keyframes lp-rec-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  3% {
+    opacity: 0.15;
+  }
+  6% {
+    opacity: 1;
+  }
+  7% {
+    opacity: 0.3;
+  }
+  9% {
+    opacity: 1;
+  }
+  34% {
+    opacity: 1;
+  }
+  36% {
+    opacity: 0.1;
+  }
+  38% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  61% {
+    opacity: 0.35;
+  }
+  63% {
+    opacity: 1;
+  }
+  64% {
+    opacity: 0.1;
+  }
+  66% {
+    opacity: 1;
+  }
+}
 
 @layer components {
   .btn-primary {
