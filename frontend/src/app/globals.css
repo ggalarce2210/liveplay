@@ -67,6 +67,17 @@
     width: 100%;
   }
 }
+/* Reutiliza el "pique" del isotipo en IntroSplash (§ver ese componente) para que el logo del
+   header de la home tenga la misma entrada animada en vez de aparecer estático de golpe. */
+@keyframes lp-glow-pulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 14px rgba(47, 154, 82, 0.35));
+  }
+  50% {
+    filter: drop-shadow(0 0 24px rgba(47, 154, 82, 0.55));
+  }
+}
 
 @layer components {
   .btn-primary {
