@@ -64,7 +64,7 @@ export default function LandingPage() {
         <div className="mx-auto mb-8 max-w-2xl text-center">
           <h2 className="text-2xl font-bold text-white sm:text-3xl">Buscá tu partido, sin necesidad de cuenta</h2>
           <p className="mt-2 text-ink-300">
-            Elegí tu deporte, tu ciudad y la cancha donde jugaste — cada cancha tiene su propia cámara IP grabando. Para ver el video hace falta iniciar sesión y haber participado del partido.
+            Elegí tu deporte, tu ciudad y la cancha donde jugaste — cada cancha tiene su propia cámara IP grabando. Para grabar jugadas y descargarlas o compartirlas tenés que registrarte o iniciar sesión.
           </p>
         </div>
         <CourtExplorer />
