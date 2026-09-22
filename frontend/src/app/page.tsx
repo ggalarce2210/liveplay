@@ -26,7 +26,7 @@ export default function LandingPage() {
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-3">
-          <LogoMark className="h-12 w-12 shrink-0 shadow-glow sm:h-14 sm:w-14" />
+          <LogoMark className="h-12 w-12 shrink-0 rounded-xl shadow-glow sm:h-14 sm:w-14" />
           <span className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             Live<span className="text-pitch-400">Play</span>
           </span>
