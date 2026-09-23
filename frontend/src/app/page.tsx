@@ -26,19 +26,7 @@ export default function LandingPage() {
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
         <div className="flex items-center gap-3">
-          <div
-            className="relative"
-            style={{ animation: 'lp-kick-in 0.85s cubic-bezier(.22,1.4,.36,1) both, lp-glow-pulse 3.2s ease-in-out 0.9s infinite' }}
-          >
-            <LogoMark className="h-12 w-12 shrink-0 sm:h-14 sm:w-14" />
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute -top-1 right-0 text-[8px] font-black leading-none tracking-tighter text-red-500 sm:text-[9px]"
-              style={{ animation: 'lp-rec-flicker 2.6s steps(1) infinite' }}
-            >
-              REC
-            </span>
-          </div>
+          <LogoMark className="h-12 w-12 shrink-0 sm:h-14 sm:w-14" />
           <span className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             Live<span className="text-pitch-400">Play</span>
           </span>
