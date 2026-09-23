@@ -1,12 +1,7 @@
 /**
- * Isotipo de LIVEPLAY: insignia en degradé verde césped con un triángulo de "play" en blanco y
- * una línea de cancha sutil de fondo — resume en un solo ícono la idea de "video + deporte en
- * vivo" sin depender de texto (§18, diseño premium/minimalista).
- * Antes tenía un punto rojo tipo "REC" en la esquina, pero a este tamaño quedaba como una
- * notificación pegada encima del ícono en vez de un detalle de marca (feedback del cliente,
- * 2026-09-22) — se sacó. La idea de "en vivo" ahora se transmite con movimiento (el glow rojo
- * animado del logo del header en la home, ver page.tsx) en vez de con un elemento fijo que hay
- * que renderizar bien en cualquier tamaño, incluido el favicon.
+ * Isotipo de LIVEPLAY: insignia en degradé verde césped con un triángulo de "play" en blanco,
+ * un punto ámbar tipo REC/en vivo y una línea de cancha sutil de fondo — resume en un solo ícono
+ * la idea de "video + deporte en vivo" sin depender de texto (§18, diseño premium/minimalista).
  */
 export default function LogoMark({ className = 'h-8 w-8' }: { className?: string }) {
   return (
@@ -20,6 +15,7 @@ export default function LogoMark({ className = 'h-8 w-8' }: { className?: string
       <rect width="40" height="40" rx="11" fill="url(#lp-badge)" />
       <path d="M4 29 Q20 21 36 29" stroke="#ffffff" strokeOpacity="0.16" strokeWidth="2" fill="none" strokeLinecap="round" />
       <path d="M16.2 12.3 L27.4 20 L16.2 27.7 Z" fill="#ffffff" />
+      <circle cx="31" cy="9" r="4.5" fill="#ffb020" stroke="#0d2e19" strokeWidth="1.5" />
     </svg>
   );
 }
