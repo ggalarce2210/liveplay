@@ -204,8 +204,19 @@ export class VideoProcessingService {
         const buf = await this.storage.getObjectAsBuffer(firstSegment.storageKey);
         await fs.writeFile(segLocalPath, buf);
 
+        // atSeconds=0 (primer frame disponible): los segmentos HLS conservan el PTS absoluto
+        // del stream original (no se resetea a 0 por segmento), así que pedir "el segundo 1"
+        // podía caer antes del inicio del segmento y no encontrar ningún frame — FFmpeg en ese
+        // caso termina con código 0 pero sin escribir el archivo de salida (silencioso). Pedir
+        // el primer frame disponible es válido siempre, sin depender de esos timestamps.
         const posterLocalPath = path.join(tmpDir, 'poster.jpg');
-        await this.ffmpeg.generatePoster(segLocalPath, posterLocalPath, 1);
+        await this.ffmpeg.generatePoster(segLocalPath, posterLocalPath, 0);
+
+        try {
+          await fs.access(posterLocalPath);
+        } catch {
+          throw new Error('FFmpeg no generó el archivo de portada (sin frames en el segmento)');
+        }
 
         const posterKey = `${video.storageBaseKey}/thumbs/poster.jpg`;
         await this.storage.putObject({ key: posterKey, filePath: posterLocalPath, contentType: 'image/jpeg' });
