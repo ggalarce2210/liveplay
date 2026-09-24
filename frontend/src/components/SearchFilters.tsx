@@ -3,17 +3,12 @@
 import clsx from 'clsx';
 
 export interface Filters {
-  datePreset?: 'today' | 'yesterday' | 'week' | 'month' | '';
-  date?: string;
-  dateFrom?: string;
-  dateTo?: string;
+  datePreset?: 'today' | 'yesterday' | 'week' | '';
   sportType?: 'FUTBOL5' | 'PADEL' | '';
   complexId?: string;
   courtId?: string;
   timeFrom?: string;
   timeTo?: string;
-  useCustomDate: boolean;
-  useRange: boolean;
 }
 
 interface ComplexOption {
@@ -27,7 +22,6 @@ const DATE_PRESETS: { value: Filters['datePreset']; label: string }[] = [
   { value: 'today', label: 'Hoy' },
   { value: 'yesterday', label: 'Ayer' },
   { value: 'week', label: 'Esta semana' },
-  { value: 'month', label: 'Este mes' },
 ];
 
 export default function SearchFilters({
@@ -65,44 +59,23 @@ export default function SearchFilters({
     <div className="card space-y-5 p-5">
       <div>
         <label className="label-field">Fecha</label>
+        {/* Se sacaron "Fecha específica" y "Rango de fechas" (además de "Este mes"): con los
+            partidos disponibles solo 1 semana (ver MatchesService.search), esas opciones ya no
+            aportaban nada útil y en mobile hacían que el filtro se viera muy apretado. */}
         <div className="flex flex-wrap gap-2">
           {DATE_PRESETS.map((p) => (
             <button
               key={p.value}
-              onClick={() => update({ datePreset: p.value, useCustomDate: false, useRange: false, date: undefined, dateFrom: undefined, dateTo: undefined })}
+              onClick={() => update({ datePreset: p.value })}
               className={clsx(
                 'rounded-full px-3.5 py-1.5 text-sm font-medium transition',
-                !filters.useCustomDate && !filters.useRange && filters.datePreset === p.value
-                  ? 'bg-pitch-500 text-white'
-                  : 'bg-ink-800 text-ink-300 hover:bg-ink-700',
+                filters.datePreset === p.value ? 'bg-pitch-500 text-white' : 'bg-ink-800 text-ink-300 hover:bg-ink-700',
               )}
             >
               {p.label}
             </button>
           ))}
-          <button
-            onClick={() => update({ useCustomDate: true, useRange: false, datePreset: '' })}
-            className={clsx('rounded-full px-3.5 py-1.5 text-sm font-medium transition', filters.useCustomDate ? 'bg-pitch-500 text-white' : 'bg-ink-800 text-ink-300 hover:bg-ink-700')}
-          >
-            Fecha específica
-          </button>
-          <button
-            onClick={() => update({ useRange: true, useCustomDate: false, datePreset: '' })}
-            className={clsx('rounded-full px-3.5 py-1.5 text-sm font-medium transition', filters.useRange ? 'bg-pitch-500 text-white' : 'bg-ink-800 text-ink-300 hover:bg-ink-700')}
-          >
-            Rango de fechas
-          </button>
         </div>
-
-        {filters.useCustomDate && (
-          <input type="date" value={filters.date ?? ''} onChange={(e) => update({ date: e.target.value })} className="input-field mt-3 max-w-xs" />
-        )}
-        {filters.useRange && (
-          <div className="mt-3 flex max-w-xs gap-2">
-            <input type="date" value={filters.dateFrom ?? ''} onChange={(e) => update({ dateFrom: e.target.value })} className="input-field" />
-            <input type="date" value={filters.dateTo ?? ''} onChange={(e) => update({ dateTo: e.target.value })} className="input-field" />
-          </div>
-        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
