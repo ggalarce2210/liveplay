@@ -1,5 +1,5 @@
 import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { eq } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
@@ -10,7 +10,7 @@ import { VideoProcessingService } from './video-processing.service';
 /**
  * Worker de la cola de procesamiento (§27/§28). Se puede ejecutar embebido en la API (dev/demo)
  * o como proceso separado (`npm run worker`, ver worker.main.ts) escalando horizontalmente
- * de forma independiente al servidor HTTP - clave para cuando haya muchas canchas grabando
+ * de forma independiente al servidor HTTP — clave para cuando haya muchas canchas grabando
  * a la vez.
  *
  * `concurrency: 1` a proposito (antes era 2): con dos jobs de ffmpeg reales corriendo a la vez
@@ -21,14 +21,66 @@ import { VideoProcessingService } from './video-processing.service';
  * arrancar si hay otro procesandose, aceptable para el volumen de esta demo.
  */
 @Processor(VIDEO_PROCESSING_QUEUE, { concurrency: 1 })
-export class VideoProcessingProcessor extends WorkerHost {
+export class VideoProcessingProcessor extends WorkerHost implements OnApplicationBootstrap {
   private readonly logger = new Logger(VideoProcessingProcessor.name);
+
+  // Backoff para cuando Redis (Upstash) empieza a rechazar comandos (ej. límite mensual de
+  // requests agotado, 2026-09-23: "ERR max requests limit exceeded"). Sin esto, BullMQ reintenta
+  // el polling de la cola (bzpopmin sobre la "marker key") cada ~100ms sin parar apenas Redis
+  // responde con un error en vez de bloquear (ver bullmq/dist/cjs/classes/worker.js,
+  // `waitForJob`) — eso son miles de requests por minuto contra Redis las 24hs, aunque no haya
+  // ningún video subiéndose, y fue justamente lo que terminó de agotar la cuota del free tier de
+  // Upstash. Acá pausamos el worker con backoff exponencial (2s -> ... -> tope de 60s) mientras
+  // los errores sigan, y lo reanudamos apenas vuelve a andar. No distingue el tipo de error
+  // adrede: cualquier fallo sostenido de Redis (cuota agotada, caída de red, lo que sea) debe
+  // frenar el loop igual, no solo este mensaje puntual.
+  private static readonly BASE_BACKOFF_MS = 2_000;
+  private static readonly MAX_BACKOFF_MS = 60_000;
+  private consecutiveErrors = 0;
+  private pausedForBackoff = false;
+  private resumeTimer?: NodeJS.Timeout;
 
   constructor(
     private videoProcessingService: VideoProcessingService,
     private dbService: DbService,
   ) {
     super();
+  }
+
+  onApplicationBootstrap() {
+    this.worker.on('error', (err: Error) => this.handleWorkerError(err));
+    this.worker.on('active', () => this.resetBackoff());
+  }
+
+  private handleWorkerError(err: Error) {
+    this.consecutiveErrors += 1;
+    const backoffMs = Math.min(
+      VideoProcessingProcessor.BASE_BACKOFF_MS * 2 ** (this.consecutiveErrors - 1),
+      VideoProcessingProcessor.MAX_BACKOFF_MS,
+    );
+    this.logger.warn(
+      `Error en el worker de video (#${this.consecutiveErrors}): ${err?.message}. ` +
+        `Pausando el polling de la cola ${backoffMs}ms para no bombardear Redis.`,
+    );
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    if (!this.pausedForBackoff) {
+      this.pausedForBackoff = true;
+      // No esperamos esta promesa: si Redis está caído, pause() también puede colgarse:
+      // preferimos seguir adelante y dejar que el propio worker reintente su conexión.
+      this.worker.pause().catch((pauseErr) => this.logger.error('No se pudo pausar el worker', pauseErr as Error));
+    }
+    this.resumeTimer = setTimeout(() => {
+      this.pausedForBackoff = false;
+      this.worker.resume();
+      this.logger.log('Reanudando el worker de video tras el backoff.');
+    }, backoffMs);
+  }
+
+  private resetBackoff() {
+    if (this.consecutiveErrors > 0) {
+      this.logger.log('El worker de video volvió a procesar normalmente, reseteando el backoff.');
+    }
+    this.consecutiveErrors = 0;
   }
 
   async process(job: Job<VideoProcessingJobData>): Promise<void> {
