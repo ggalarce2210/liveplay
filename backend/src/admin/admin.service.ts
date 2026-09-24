@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { and, desc, eq, lt } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { users, matches, videos, courts, cameras, clips, auditLogs } from '../db/schema';
@@ -8,6 +8,8 @@ const DEFAULT_QUOTA_BYTES = 5 * 1024 ** 4; // 5 TB — configurable por plan/com
 
 @Injectable()
 export class AdminService {
+  private readonly logger = new Logger(AdminService.name);
+
   constructor(private dbService: DbService, private videoProcessing: VideoProcessingService) {}
   private get db() {
     return this.dbService.db;
@@ -73,8 +75,18 @@ export class AdminService {
     return this.db.query.auditLogs.findMany({ limit, orderBy: [desc(auditLogs.createdAt)], with: { user: true } });
   }
 
-  /** Backfill puntual (2026-09-24) — ver comentario en VideoProcessingService.backfillPosters. */
+  /**
+   * Backfill puntual (2026-09-24) — ver comentario en VideoProcessingService.backfillPosters.
+   * Se dispara en background (fire-and-forget) y responde al instante: el proxy de Vercel
+   * corta requests largos (>~10-60s) y procesar varios videos con ffmpeg de forma síncrona
+   * superaba ese límite (502 Bad Gateway). El resultado real queda en los logs del backend;
+   * para verificar alcanza con refrescar el dashboard y ver las portadas.
+   */
   backfillVideoPosters() {
-    return this.videoProcessing.backfillPosters();
+    this.videoProcessing
+      .backfillPosters()
+      .then((results) => this.logger.log(`Backfill de portadas terminado: ${JSON.stringify(results)}`))
+      .catch((err) => this.logger.error(`Backfill de portadas falló: ${(err as Error).message}`));
+    return { started: true };
   }
 }
