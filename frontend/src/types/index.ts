@@ -116,6 +116,8 @@ export interface Video {
   width?: number | null;
   height?: number | null;
   segments?: VideoSegment[];
+  /** URL firmada de corta duración a un frame del video, para usar de portada en las tarjetas. */
+  posterUrl?: string | null;
 }
 
 export interface MatchEvent {
