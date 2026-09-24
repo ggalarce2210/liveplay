@@ -15,8 +15,8 @@ import { VIDEO_PROCESSING_QUEUE, VideoProcessingJobData } from './video-processi
 /**
  * Orquesta el procesamiento de video. Encola trabajos en BullMQ/Redis (§27, §28) para que
  * la ingesta de un partido no bloquee la API. `runProcessMatchVideoNow` ejecuta el mismo
- * pipeline de forma sincrona - se usa en el script de seed/demo cuando no hay un worker
- * separado corriendo, pero en produccion SIEMPRE se debe usar la cola.
+ * pipeline de forma síncrona — se usa en el script de seed/demo cuando no hay un worker
+ * separado corriendo, pero en producción SIEMPRE se debe usar la cola.
  */
 @Injectable()
 export class VideoProcessingService {
@@ -82,6 +82,19 @@ export class VideoProcessingService {
       const thumbsDir = path.join(tmpDir, 'thumbs');
       const { spriteFile, vttFile } = await this.ffmpeg.generateThumbnailSprite(sourceFilePath, thumbsDir);
 
+      // El poster es "lindo tener", no crítico: si un video puntual es demasiado corto/raro y
+      // FFmpeg no puede sacar el frame en `atSeconds`, no queremos que eso tire abajo todo el
+      // procesamiento del partido (que sí es crítico) — la tarjeta cae de nuevo al ícono
+      // genérico si `posterKey` queda null.
+      const posterFile = 'poster.jpg';
+      let hasPoster = false;
+      try {
+        await this.ffmpeg.generatePoster(sourceFilePath, path.join(thumbsDir, posterFile));
+        hasPoster = true;
+      } catch (posterErr) {
+        this.logger.warn(`No se pudo generar el poster del video ${videoId}: ${(posterErr as Error).message}`);
+      }
+
       let sizeBytes = 0;
       for (const seg of segments) {
         const stat = await fs.stat(path.join(hlsDir, seg.fileName));
@@ -97,6 +110,9 @@ export class VideoProcessingService {
       }
       await this.storage.putObject({ key: `${base}/thumbs/${spriteFile}`, filePath: path.join(thumbsDir, spriteFile), contentType: 'image/jpeg' });
       await this.storage.putObject({ key: `${base}/thumbs/${vttFile}`, filePath: path.join(thumbsDir, vttFile), contentType: 'text/vtt' });
+      if (hasPoster) {
+        await this.storage.putObject({ key: `${base}/thumbs/${posterFile}`, filePath: path.join(thumbsDir, posterFile), contentType: 'image/jpeg' });
+      }
 
       await this.db.transaction(async (tx) => {
         await tx.delete(videoSegments).where(eq(videoSegments.videoId, videoId));
@@ -118,6 +134,7 @@ export class VideoProcessingService {
           .set({
             status: 'READY',
             hlsManifestKey: `${base}/hls/${manifestFile}`,
+            posterKey: hasPoster ? `${base}/thumbs/${posterFile}` : null,
             thumbnailSpriteKey: `${base}/thumbs/${spriteFile}`,
             thumbnailVttKey: `${base}/thumbs/${vttFile}`,
             durationSeconds: probeResult.durationSeconds,
@@ -139,7 +156,7 @@ export class VideoProcessingService {
             userIds.map((userId) => ({
               userId,
               type: 'MATCH_READY' as const,
-              title: 'Tu partido ya esta disponible',
+              title: 'Tu partido ya está disponible',
               body: `Tu partido del ${match.date} ya puede reproducirse.`,
               metadata: { matchId: match.id },
             })),
@@ -149,7 +166,7 @@ export class VideoProcessingService {
 
       this.logger.log(`Video ${videoId} procesado: ${segments.length} segmentos, ${probeResult.durationSeconds.toFixed(1)}s`);
     } catch (err) {
-      this.logger.error(`Fallo el procesamiento del video ${videoId}`, err as Error);
+      this.logger.error(`Falló el procesamiento del video ${videoId}`, err as Error);
       await this.db.update(videos).set({ status: 'FAILED', errorMessage: String(err), updatedAt: new Date() }).where(eq(videos.id, videoId));
       await this.db.update(matches).set({ status: 'FAILED', updatedAt: new Date() }).where(eq(matches.id, video.matchId));
       throw err;
@@ -162,7 +179,7 @@ export class VideoProcessingService {
     const { clipId } = job;
     const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, clipId), with: { match: { with: { video: true } } } });
     if (!clip) throw new Error(`Clip ${clipId} no encontrado`);
-    if (!clip.match.video?.hlsManifestKey) throw new Error('El partido todavia no tiene video procesado');
+    if (!clip.match.video?.hlsManifestKey) throw new Error('El partido todavía no tiene video procesado');
 
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ecp-clip-'));
     try {
@@ -201,7 +218,7 @@ export class VideoProcessingService {
 
       await this.db.update(clips).set({ status: 'READY', storageKey: key, updatedAt: new Date() }).where(eq(clips.id, clipId));
     } catch (err) {
-      this.logger.error(`Fallo la generacion del clip ${clipId}`, err as Error);
+      this.logger.error(`Falló la generación del clip ${clipId}`, err as Error);
       await this.db.update(clips).set({ status: 'FAILED', errorMessage: String(err), updatedAt: new Date() }).where(eq(clips.id, clipId));
       throw err;
     } finally {
