@@ -2,12 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { and, desc, eq, lt } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { users, matches, videos, courts, cameras, clips, auditLogs } from '../db/schema';
+import { VideoProcessingService } from '../video-processing/video-processing.service';
 
 const DEFAULT_QUOTA_BYTES = 5 * 1024 ** 4; // 5 TB — configurable por plan/complejo en producción
 
 @Injectable()
 export class AdminService {
-  constructor(private dbService: DbService) {}
+  constructor(private dbService: DbService, private videoProcessing: VideoProcessingService) {}
   private get db() {
     return this.dbService.db;
   }
@@ -70,5 +71,10 @@ export class AdminService {
 
   getAuditLogs(limit = 100) {
     return this.db.query.auditLogs.findMany({ limit, orderBy: [desc(auditLogs.createdAt)], with: { user: true } });
+  }
+
+  /** Backfill puntual (2026-09-24) — ver comentario en VideoProcessingService.backfillPosters. */
+  backfillVideoPosters() {
+    return this.videoProcessing.backfillPosters();
   }
 }
