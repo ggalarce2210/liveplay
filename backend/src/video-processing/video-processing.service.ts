@@ -175,6 +175,52 @@ export class VideoProcessingService {
     }
   }
 
+  /**
+   * Backfill puntual (2026-09-24) para videos que se procesaron ANTES de que existiera la
+   * función de portada (`posterKey` quedó `null` para siempre en ellos, ya que el pipeline
+   * normal solo genera el poster durante `processMatchVideo`). No hace falta el archivo
+   * original: `originalFileKey` nunca se persiste (ver comentario en el schema), así que en vez
+   * de reprocesar el partido entero se toma el primer segmento HLS ya guardado (~6s, ver
+   * `SEGMENT_TARGET_SECONDS` en FfmpegService) y se le extrae un frame — mismo resultado visual
+   * que si se hubiera generado en su momento, sin tener que volver a subir nada. Pensado para
+   * llamarse una sola vez por admin vía `POST /admin/videos/backfill-posters`, no forma parte
+   * del pipeline normal.
+   */
+  async backfillPosters() {
+    const targets = await this.db.query.videos.findMany({
+      where: (v, { and, eq, isNull, isNotNull }) => and(eq(v.status, 'READY'), isNull(v.posterKey), isNotNull(v.hlsManifestKey)),
+    });
+    const results: { videoId: string; ok: boolean; error?: string }[] = [];
+    for (const video of targets) {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ecp-poster-backfill-'));
+      try {
+        const firstSegment = await this.db.query.videoSegments.findFirst({
+          where: eq(videoSegments.videoId, video.id),
+          orderBy: [asc(videoSegments.index)],
+        });
+        if (!firstSegment) throw new Error('El video no tiene segmentos guardados');
+
+        const segLocalPath = path.join(tmpDir, 'segment.ts');
+        const buf = await this.storage.getObjectAsBuffer(firstSegment.storageKey);
+        await fs.writeFile(segLocalPath, buf);
+
+        const posterLocalPath = path.join(tmpDir, 'poster.jpg');
+        await this.ffmpeg.generatePoster(segLocalPath, posterLocalPath, 1);
+
+        const posterKey = `${video.storageBaseKey}/thumbs/poster.jpg`;
+        await this.storage.putObject({ key: posterKey, filePath: posterLocalPath, contentType: 'image/jpeg' });
+        await this.db.update(videos).set({ posterKey, updatedAt: new Date() }).where(eq(videos.id, video.id));
+        results.push({ videoId: video.id, ok: true });
+      } catch (err) {
+        this.logger.warn(`No se pudo generar poster retroactivo para el video ${video.id}: ${(err as Error).message}`);
+        results.push({ videoId: video.id, ok: false, error: String(err) });
+      } finally {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+      }
+    }
+    return results;
+  }
+
   async generateClip(job: Extract<VideoProcessingJobData, { type: 'generate-clip' }>) {
     const { clipId } = job;
     const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, clipId), with: { match: { with: { video: true } } } });
