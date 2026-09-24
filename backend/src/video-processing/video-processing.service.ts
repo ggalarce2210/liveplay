@@ -212,14 +212,23 @@ export class VideoProcessingService {
         const posterLocalPath = path.join(tmpDir, 'poster.jpg');
         await this.ffmpeg.generatePoster(segLocalPath, posterLocalPath, 0);
 
+        let posterBuffer: Buffer;
         try {
-          await fs.access(posterLocalPath);
+          posterBuffer = await fs.readFile(posterLocalPath);
         } catch {
           throw new Error('FFmpeg no generó el archivo de portada (sin frames en el segmento)');
         }
 
+        // Subimos como Buffer (`body`) en vez de `filePath` (que en el driver S3/R2 arma un
+        // `fs.createReadStream`): con un stream crudo, el SDK de AWS no conoce el content-length
+        // de antemano y en R2 eso rompe con "Invalid value undefined for header
+        // x-amz-decoded-content-length" — y como el stream queda sin consumir, el intento de
+        // abrirlo más tarde (ya con esta carpeta temporal borrada por el `finally`) tira un ENOENT
+        // no capturado que tumba el proceso entero. El poster pesa unos KB, así que cargarlo
+        // entero en memoria es la vía simple y segura acá (no aplica al resto de `putObject`,
+        // que sigue usando streams para archivos grandes como segmentos/clips).
         const posterKey = `${video.storageBaseKey}/thumbs/poster.jpg`;
-        await this.storage.putObject({ key: posterKey, filePath: posterLocalPath, contentType: 'image/jpeg' });
+        await this.storage.putObject({ key: posterKey, body: posterBuffer, contentType: 'image/jpeg' });
         await this.db.update(videos).set({ posterKey, updatedAt: new Date() }).where(eq(videos.id, video.id));
         results.push({ videoId: video.id, ok: true });
       } catch (err) {
