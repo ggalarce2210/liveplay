@@ -14,8 +14,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-ink-950">
-      {/* Sidebar fijo — solo desktop */}
-      <div className="hidden md:block">
+      {/* Sidebar fijo — solo desktop. `h-screen` acá (y no en el <aside> de Sidebar, que ahora
+          usa `h-full`) porque este div es el que necesita imponer la altura real: el <aside>
+          solo hereda la de su contenedor. */}
+      <div className="hidden h-screen md:block">
         <Sidebar />
       </div>
 
