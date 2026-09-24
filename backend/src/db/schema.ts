@@ -212,6 +212,7 @@ export const videos = pgTable('videos', {
   storageBaseKey: text('storage_base_key').notNull(),
   originalFileKey: text('original_file_key'),
   hlsManifestKey: text('hls_manifest_key'),
+  posterKey: text('poster_key'),
   thumbnailSpriteKey: text('thumbnail_sprite_key'),
   thumbnailVttKey: text('thumbnail_vtt_key'),
   durationSeconds: doublePrecision('duration_seconds'),
