@@ -3,11 +3,19 @@ import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
+import { StreamTokenService } from '../storage/stream-token.service';
 import { SearchMatchesDto } from './dto/search-matches.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { formatInTimeZone } from '../common/timezone';
 
 const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
+// Decisión del cliente (2026-09-24): los partidos grabados solo quedan disponibles para ver
+// durante 1 semana (los clips generados a partir de ellos NO tienen este límite — ver
+// ClipsController.list, que lee directo de `clips` y nunca pasa por acá). Es un límite de
+// PRODUCTO aplicado siempre, no un filtro más que el usuario elige: por eso se combina con AND
+// contra cualquier otro filtro de fecha, en vez de vivir como una opción de `datePreset`.
+const MATCH_AVAILABILITY_DAYS = 7;
+const POSTER_URL_TTL_SECONDS = 60 * 60 * 4; // mismo TTL que el resto de las URLs firmadas de video
 
 function startOfDay(d: Date) {
   const x = new Date(d);
@@ -22,7 +30,11 @@ function endOfDay(d: Date) {
 
 @Injectable()
 export class MatchesService {
-  constructor(private dbService: DbService, private videoProcessing: VideoProcessingService) {}
+  constructor(
+    private dbService: DbService,
+    private videoProcessing: VideoProcessingService,
+    private streamTokens: StreamTokenService,
+  ) {}
   private get db() {
     return this.dbService.db;
   }
@@ -71,6 +83,13 @@ export class MatchesService {
       conditions.push(gte(matches.startTime, startOfDay(monthAgo)), lte(matches.startTime, endOfDay(now)));
     }
 
+    // Ventana de disponibilidad de 1 semana (ver constante arriba): se aplica SIEMPRE, con AND,
+    // sin importar qué haya elegido el filtro de fecha — no es una opción más, es el límite real
+    // de lo que el club deja disponible para reproducir.
+    const availabilityCutoff = new Date(now);
+    availabilityCutoff.setDate(availabilityCutoff.getDate() - MATCH_AVAILABILITY_DAYS);
+    conditions.push(gte(matches.startTime, availabilityCutoff));
+
     let result = await this.db.query.matches.findMany({
       where: conditions.length ? and(...conditions) : undefined,
       with: {
@@ -108,7 +127,18 @@ export class MatchesService {
     // aparte — no reutilizar este quitando el filtro.
     result = result.filter((m) => !!m.video);
 
-    return result;
+    return result.map((m) => this.withPosterUrl(m));
+  }
+
+  /**
+   * Firma `video.posterKey` (si el video lo tiene) en una URL de corta duración vía
+   * `/api/stream/:token`, siguiendo el mismo criterio que el resto de las URLs de video (§25:
+   * nunca la key/ruta física real). El campo llega como `video.posterUrl` — la tarjeta de
+   * partido en el frontend lo usa como imagen de portada en vez del ícono genérico.
+   */
+  private withPosterUrl<T extends { video?: { posterKey?: string | null } | null }>(match: T): T {
+    if (!match.video?.posterKey) return match;
+    return { ...match, video: { ...match.video, posterUrl: this.streamTokens.sign(match.video.posterKey, POSTER_URL_TTL_SECONDS) } };
   }
 
   async get(id: string, requester: AuthUser) {
@@ -124,7 +154,7 @@ export class MatchesService {
       },
     });
     if (!match) throw new NotFoundException('Partido no encontrado');
-    return match;
+    return this.withPosterUrl(match);
   }
 
   async create(data: any) {
