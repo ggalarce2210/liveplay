@@ -6,7 +6,7 @@ import { Match, Complex } from '@/types';
 import MatchCard from '@/components/MatchCard';
 import SearchFilters, { Filters } from '@/components/SearchFilters';
 
-const DEFAULT_FILTERS: Filters = { datePreset: '', useCustomDate: false, useRange: false };
+const DEFAULT_FILTERS: Filters = { datePreset: '' };
 
 export default function DashboardPage() {
   const [matches, setMatches] = useState<Match[] | null>(null);
@@ -16,11 +16,7 @@ export default function DashboardPage() {
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
-    if (filters.useCustomDate && filters.date) params.set('date', filters.date);
-    else if (filters.useRange) {
-      if (filters.dateFrom) params.set('dateFrom', filters.dateFrom);
-      if (filters.dateTo) params.set('dateTo', filters.dateTo);
-    } else if (filters.datePreset) params.set('datePreset', filters.datePreset);
+    if (filters.datePreset) params.set('datePreset', filters.datePreset);
 
     if (filters.sportType) params.set('sportType', filters.sportType);
     if (filters.complexId) params.set('complexId', filters.complexId);
