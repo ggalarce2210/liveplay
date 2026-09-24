@@ -165,6 +165,29 @@ export class FfmpegService {
     return { spriteFile, vttFile };
   }
 
+  /**
+   * Extrae un único frame como JPEG para usar de "poster" (miniatura de portada) en las
+   * tarjetas de partido — hasta ahora esas tarjetas mostraban un ícono genérico fijo (🎾/⚽)
+   * en vez de una imagen real del video (pedido del cliente, 2026-09-24).
+   *
+   * `atSeconds` por default apunta a los 3s: lo suficientemente adentro del video como para
+   * evitar frames negros/de transición del arranque de la grabación, pero sin acercarse a
+   * requerir conocer la duración total de antemano (evita un `probe()` extra solo para esto).
+   * Si el video dura menos que eso, FFmpeg simplemente devuelve el último frame disponible en
+   * vez de fallar.
+   */
+  async generatePoster(inputPath: string, outputPath: string, atSeconds = 3): Promise<void> {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-ss', String(atSeconds),
+      '-i', inputPath,
+      '-frames:v', '1',
+      '-q:v', '3',
+      outputPath,
+    ]);
+  }
+
   private toVttTime(totalSeconds: number): string {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
