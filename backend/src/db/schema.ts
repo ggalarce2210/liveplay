@@ -153,6 +153,21 @@ export const cameras = pgTable('cameras', {
    */
   imouDeviceId: text('imou_device_id'),
   imouChannelId: text('imou_channel_id'),
+  /**
+   * Alta simplificada por "código de enrolamiento" (2026-09-30): en vez de tipear config.env a
+   * mano en el TV box (proceso "muy engorroso" según feedback del usuario — ver AGENTE.md), el
+   * admin genera desde el panel un código corto de un solo uso; el TV box lo canjea contra
+   * `POST /agent/enroll` y recibe de vuelta el bundle completo de config (backendUrl, token de
+   * agente, RTSP URL). Estos 3 campos son efímeros: se completan al generar el código y se
+   * borran los tres apenas se canjea (o quedan vencidos) — nunca conviven con un código ya usado.
+   * `pendingAgentToken` es la única excepción al criterio de "nunca texto plano" de
+   * `agentKeyHash`: acá vive el token real en texto plano durante la ventana de canje (10 min)
+   * porque hace falta poder devolvérselo tal cual al TV box; fuera de esa ventana siempre es
+   * null, igual que los otros dos.
+   */
+  enrollmentCodeHash: text('enrollment_code_hash'),
+  enrollmentCodeExpiresAt: timestamp('enrollment_code_expires_at', { withTimezone: true }),
+  pendingAgentToken: text('pending_agent_token'),
   ...timestamps,
 });
 
