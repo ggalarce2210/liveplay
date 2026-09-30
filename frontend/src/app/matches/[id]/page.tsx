@@ -6,7 +6,8 @@ import Link from 'next/link';
 import AuthGuard from '@/components/AuthGuard';
 import VideoPlayer, { VideoPlayerHandle } from '@/components/VideoPlayer';
 import EventsList from '@/components/EventsList';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
+import { useAuthStore } from '@/lib/auth-store';
 import { Match, PlaybackUrls, Bookmark } from '@/types';
 import { formatClock, formatDate, formatTime } from '@/lib/format';
 
@@ -14,11 +15,15 @@ export default function MatchDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const playerRef = useRef<VideoPlayerHandle>(null);
+  const { user } = useAuthStore();
+  const canDeleteMatch = user?.role === 'SUPER_ADMIN' || user?.role === 'COMPLEX_ADMIN';
 
   const [match, setMatch] = useState<Match | null>(null);
   const [playback, setPlayback] = useState<PlaybackUrls | null>(null);
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [deletingMatch, setDeletingMatch] = useState(false);
+  const [deleteMatchError, setDeleteMatchError] = useState<string | null>(null);
 
   const [clipStart, setClipStart] = useState<number | null>(null);
   const [clipEnd, setClipEnd] = useState<number | null>(null);
@@ -78,6 +83,20 @@ export default function MatchDetailPage() {
     setShareUrl(`${window.location.origin}${res.url}`);
   }
 
+  /** Borra el partido (y su video grabado) — solo SUPER_ADMIN/COMPLEX_ADMIN. */
+  async function deleteMatch() {
+    if (!window.confirm('¿Eliminar este partido y su video grabado? No se puede deshacer.')) return;
+    setDeletingMatch(true);
+    setDeleteMatchError(null);
+    try {
+      await api.delete(`/matches/${params.id}`);
+      router.push('/dashboard');
+    } catch (err) {
+      setDeleteMatchError(err instanceof ApiError ? err.message : 'No pudimos eliminar el partido');
+      setDeletingMatch(false);
+    }
+  }
+
   if (error) {
     return (
       <AuthGuard>
@@ -117,15 +136,25 @@ export default function MatchDetailPage() {
               📅 {formatDate(match.date)} · ⏰ {formatTime(match.startTime)} · 📍 {match.complex?.name}
             </p>
           </div>
-          <button onClick={shareMatch} className="btn-secondary text-sm">
-            🔗 Compartir partido
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={shareMatch} className="btn-secondary text-sm">
+              🔗 Compartir partido
+            </button>
+            {canDeleteMatch && (
+              <button onClick={deleteMatch} disabled={deletingMatch} className="btn-secondary text-sm text-red-400 hover:text-red-300 disabled:opacity-60">
+                {deletingMatch ? 'Eliminando...' : '🗑 Eliminar partido'}
+              </button>
+            )}
+          </div>
         </div>
 
         {shareUrl && (
           <div className="mb-4 rounded-lg border border-pitch-500/40 bg-pitch-500/10 px-4 py-3 text-sm text-pitch-300">
             Enlace privado (vence en 48hs): <span className="font-mono">{shareUrl}</span>
           </div>
+        )}
+        {deleteMatchError && (
+          <div className="mb-4 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">{deleteMatchError}</div>
         )}
 
         <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
