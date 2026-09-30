@@ -61,6 +61,9 @@ export default function CanchasAdminPage() {
   const [showNewComplex, setShowNewComplex] = useState(false);
   const [showNewCourt, setShowNewCourt] = useState(false);
 
+  const [deletingComplex, setDeletingComplex] = useState(false);
+  const [deleteComplexError, setDeleteComplexError] = useState<string | null>(null);
+
   // Los dispositivos Imou se piden una sola vez (lista global de la cuenta) y se comparten
   // entre todos los formularios de "agregar cámara" que se abran en esta página.
   const [imouDevices, setImouDevices] = useState<ImouDevice[] | null>(null);
@@ -108,6 +111,33 @@ export default function CanchasAdminPage() {
   }
 
   const selectedComplex = complexes?.find((c) => c.id === selectedComplexId) ?? null;
+
+  /** Borra el complejo entero (cascada: sus canchas, cámaras, suscripción y partidos) — pensado
+   * para poder "arrancar de cero" con un complejo de prueba cargado mal, sin tener que borrar
+   * cancha por cancha y cámara por cámara a mano. Solo lo puede hacer SUPER_ADMIN (ver
+   * ComplexesController.remove del backend). */
+  async function onDeleteComplex() {
+    if (!selectedComplex) return;
+    if (
+      !window.confirm(
+        `¿Eliminar el complejo "${selectedComplex.name}"? Esto borra también todas sus canchas, cámaras y partidos. No se puede deshacer.`,
+      )
+    ) {
+      return;
+    }
+    setDeletingComplex(true);
+    setDeleteComplexError(null);
+    try {
+      await api.delete(`/complexes/${selectedComplex.id}`);
+      setSelectedComplexId(null);
+      setCourts(null);
+      await loadComplexes();
+    } catch (err) {
+      setDeleteComplexError(errorMessage(err, 'No pudimos eliminar el complejo'));
+    } finally {
+      setDeletingComplex(false);
+    }
+  }
 
   return (
     <AuthGuard>
@@ -170,10 +200,20 @@ export default function CanchasAdminPage() {
                         <h2 className="text-lg font-semibold text-white">{selectedComplex.name}</h2>
                         {selectedComplex.city && <p className="text-sm text-ink-400">{selectedComplex.city}</p>}
                       </div>
-                      <button className="btn-secondary" onClick={() => setShowNewCourt((v) => !v)}>
-                        {showNewCourt ? 'Cancelar' : '+ Nueva cancha'}
-                      </button>
+                      <div className="flex items-center gap-4">
+                        <button className="btn-secondary" onClick={() => setShowNewCourt((v) => !v)}>
+                          {showNewCourt ? 'Cancelar' : '+ Nueva cancha'}
+                        </button>
+                        <button
+                          className="text-xs font-semibold text-red-400 hover:text-red-300 disabled:opacity-60"
+                          onClick={onDeleteComplex}
+                          disabled={deletingComplex}
+                        >
+                          {deletingComplex ? 'Eliminando...' : '🗑 Eliminar complejo'}
+                        </button>
+                      </div>
                     </div>
+                    {deleteComplexError && <p className="mt-2 text-xs text-red-400">{deleteComplexError}</p>}
 
                     {showNewCourt && (
                       <div className="mt-4 border-t border-ink-800 pt-4">
@@ -539,6 +579,38 @@ function CameraSummary({ camera, onDeleted }: { camera: Camera; onDeleted: () =>
   const [testError, setTestError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [enrollment, setEnrollment] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+
+  // Cuenta regresiva del código (vence a los 10 min del lado del backend) — puramente visual,
+  // para que quien está parado frente al TV box sepa si todavía llega a tipearlo o mejor genera
+  // uno nuevo. El backend es la única fuente de verdad real sobre si el código sigue valiendo.
+  useEffect(() => {
+    if (!enrollment) {
+      setSecondsLeft(null);
+      return;
+    }
+    const expiresAt = new Date(enrollment.expiresAt).getTime();
+    const tick = () => setSecondsLeft(Math.max(0, Math.round((expiresAt - Date.now()) / 1000)));
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [enrollment]);
+
+  async function onGenerateEnrollmentCode() {
+    setEnrolling(true);
+    setEnrollError(null);
+    try {
+      const res = await api.post<{ code: string; expiresAt: string }>(`/cameras/${camera.id}/enrollment-code`, {});
+      setEnrollment(res);
+    } catch (err) {
+      setEnrollError(errorMessage(err, 'No pudimos generar el código'));
+    } finally {
+      setEnrolling(false);
+    }
+  }
 
   async function onTestLive() {
     setTesting(true);
@@ -596,6 +668,29 @@ function CameraSummary({ camera, onDeleted }: { camera: Camera; onDeleted: () =>
               <div className="mt-2 max-w-sm rounded-lg bg-ink-800/60 p-2 text-xs text-ink-300">
                 <p className="mb-1 text-ink-400">URL HLS (abrila en VLC u otro reproductor):</p>
                 <p className="break-all font-mono text-pitch-400">{liveUrl}</p>
+              </div>
+            )}
+          </div>
+        )}
+        {camera.type !== 'IMOU_CLOUD' && (
+          <div>
+            <button className="btn-secondary text-sm" onClick={onGenerateEnrollmentCode} disabled={enrolling}>
+              {enrolling ? 'Generando...' : '🔑 Generar código de instalación'}
+            </button>
+            {enrollError && <p className="mt-2 text-xs text-red-400">{enrollError}</p>}
+            {enrollment && secondsLeft !== null && (
+              <div className="mt-2 max-w-xs rounded-lg bg-ink-800/60 p-3 text-xs text-ink-300">
+                {secondsLeft > 0 ? (
+                  <>
+                    <p className="mb-1 text-ink-400">
+                      Ingresá este código en la pantalla de instalación del TV box (vence en{' '}
+                      {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}):
+                    </p>
+                    <p className="text-center text-2xl font-bold tracking-widest text-pitch-400">{enrollment.code}</p>
+                  </>
+                ) : (
+                  <p className="text-red-400">El código venció — generá uno nuevo.</p>
+                )}
               </div>
             )}
           </div>
