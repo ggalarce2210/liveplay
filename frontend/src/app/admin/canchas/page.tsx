@@ -473,13 +473,65 @@ function CourtCard({
 }) {
   const [showCameraForm, setShowCameraForm] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(court.name);
+  const [savingName, setSavingName] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+
+  async function onSaveName(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = nameDraft.trim();
+    if (!trimmed) return;
+    setSavingName(true);
+    setNameError(null);
+    try {
+      await api.patch(`/courts/${court.id}`, { name: trimmed });
+      setEditingName(false);
+      onChanged();
+    } catch (err) {
+      setNameError(errorMessage(err, 'No pudimos renombrar la cancha'));
+    } finally {
+      setSavingName(false);
+    }
+  }
 
   return (
     <div className="card p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="font-semibold text-white">{court.name}</h3>
+          {editingName ? (
+            <form className="flex flex-wrap items-center gap-2" onSubmit={onSaveName}>
+              <input
+                autoFocus
+                className="input-field w-40 text-sm"
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+              />
+              <button type="submit" disabled={savingName} className="text-xs font-semibold text-pitch-400 hover:text-pitch-300 disabled:opacity-60">
+                {savingName ? 'Guardando...' : 'Guardar'}
+              </button>
+              <button
+                type="button"
+                className="text-xs text-ink-400 hover:text-ink-200"
+                onClick={() => {
+                  setEditingName(false);
+                  setNameDraft(court.name);
+                  setNameError(null);
+                }}
+              >
+                Cancelar
+              </button>
+            </form>
+          ) : (
+            <div className="flex items-center gap-2">
+              <h3 className="font-semibold text-white">{court.name}</h3>
+              <button className="text-xs text-ink-400 hover:text-ink-200" onClick={() => setEditingName(true)} title="Editar nombre">
+                ✏️
+              </button>
+            </div>
+          )}
           <p className="text-xs text-ink-400">{SPORT_LABELS[court.sportType] ?? court.sportType}</p>
+          {nameError && <p className="mt-1 text-xs text-red-400">{nameError}</p>}
         </div>
         <StatusBadge status={court.status} />
       </div>
