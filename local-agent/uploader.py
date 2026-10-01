@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
-Agente local de LivePlay - parte "uploader" (ver ../backend/AGENTE.md).
+Agente local de LivePlay — parte "uploader" (ver ../backend/AGENTE.md).
 
 Cada POLL_SECONDS:
-  1. Le pregunta al backend (GET /agent/matches/pending) que partidos de ESTA cancha ya
-     terminaron y todavia no tienen video (o quedaron en FAILED).
+  1. Le pregunta al backend (GET /agent/matches/pending) qué partidos de ESTA cancha ya
+     terminaron y todavía no tienen video (o quedaron en FAILED).
   2. Para cada uno, busca entre los segmentos que graba record.sh (misma carpeta,
-     RECORDINGS_DIR) cuales cubren el horario del partido, los concatena y recorta
+     RECORDINGS_DIR) cuáles cubren el horario del partido, los concatena y recorta
      exactamente a [startTime, endTime] con ffmpeg (-c copy, sin recodificar).
-  3. Sube ese recorte a POST /agent/matches/:id/video con el mismo token de la camara -
+  3. Sube ese recorte a POST /agent/matches/:id/video con el mismo token de la cámara —
      ese endpoint ya dispara el pipeline real de HLS + thumbnails que corre en el backend
-     (nada de esto es nuevo del lado del servidor, ya esta construido y probado).
-  4. Si algo falla (sin segmentos todavia, subida caida, etc.) no pasa nada grave: el
-     partido va a seguir apareciendo en "pending" en la proxima vuelta y se reintenta solo.
+     (nada de esto es nuevo del lado del servidor, ya está construido y probado).
+  4. Si algo falla (sin segmentos todavía, subida caída, etc.) no pasa nada grave: el
+     partido va a seguir apareciendo en "pending" en la próxima vuelta y se reintenta solo.
 
-Solo depende de la biblioteca estandar de Python (para no requerir "pip install requests"
-en un Termux recien instalado) + los binarios "ffmpeg" y "curl" del sistema.
+Solo depende de la biblioteca estándar de Python (para no requerir "pip install requests"
+en un Termux recién instalado) + los binarios "ffmpeg" y "curl" del sistema.
 """
 from __future__ import annotations
 
@@ -39,10 +39,10 @@ def log(scope: str, msg: str) -> None:
 
 
 def load_config() -> dict:
-    """Lee config.env (formato KEY=VALUE, con soporte basico de $HOME) sin depender de bash."""
+    """Lee config.env (formato KEY=VALUE, con soporte básico de $HOME) sin depender de bash."""
     path = AGENT_DIR / "config.env"
     if not path.exists():
-        log("uploader", f"No existe {path} - copia config.example.env a config.env y completalo.")
+        log("uploader", f"No existe {path} — copiá config.example.env a config.env y completalo.")
         sys.exit(1)
 
     cfg: dict[str, str] = {}
@@ -66,13 +66,14 @@ def load_config() -> dict:
     cfg.setdefault("RETENTION_HOURS", "8")
     cfg.setdefault("POLL_SECONDS", "120")
     cfg.setdefault("BUFFER_MINUTES", "15")
+    cfg.setdefault("SAF_BACKUP_DIR_URI", "")  # opcional: respaldo a SD vía Termux SAF, ver config.example.env
     return cfg
 
 
 def parse_iso(value: str) -> datetime:
-    """Convierte un timestamp ISO8601 (los que devuelve el backend, tipicamente con 'Z') a un
+    """Convierte un timestamp ISO8601 (los que devuelve el backend, típicamente con 'Z') a un
     datetime aware en UTC. `fromisoformat` de Python no acepta el sufijo 'Z' en todas las
-    versiones, asi que se normaliza a mano en vez de asumir Python 3.11+."""
+    versiones, así que se normaliza a mano en vez de asumir Python 3.11+."""
     v = value.strip()
     if v.endswith("Z"):
         v = v[:-1] + "+00:00"
@@ -117,14 +118,14 @@ def segments_for_window(
     segments: list[tuple[datetime, Path]], window_start: datetime, window_end: datetime, segment_seconds: int
 ) -> list[tuple[datetime, Path]] | None:
     """Devuelve los segmentos que cubren [window_start, window_end), o None si la ventana
-    todavia no esta totalmente grabada (el partido termino hace muy poco, o el agente recien
-    arranco y todavia no tiene suficiente historial)."""
+    todavía no está totalmente grabada (el partido terminó hace muy poco, o el agente recién
+    arrancó y todavía no tiene suficiente historial)."""
     if not segments:
         return None
 
-    # El ultimo segmento de la lista puede estar siendo escrito ahora mismo por record.sh -
-    # nunca lo tocamos hasta que rote a uno nuevo. Si la ventana pedida todavia se solapa con
-    # ese segmento "activo", esperamos a la proxima vuelta en vez de leer un archivo a medio
+    # El último segmento de la lista puede estar siendo escrito ahora mismo por record.sh —
+    # nunca lo tocamos hasta que rote a uno nuevo. Si la ventana pedida todavía se solapa con
+    # ese segmento "activo", esperamos a la próxima vuelta en vez de leer un archivo a medio
     # escribir.
     active_start = segments[-1][0]
     if window_end >= active_start:
@@ -143,9 +144,9 @@ def build_clip(
     segments: list[tuple[datetime, Path]], window_start: datetime, window_end: datetime, tmp_dir: Path, match_id: str
 ) -> Path | None:
     """Concatena los segmentos relevantes y recorta al horario exacto del partido. Usa -c
-    copy (sin recodificar) en las dos etapas: rapido y liviano, a costa de que el corte final
-    puede quedar en el keyframe mas cercano en vez de al segundo exacto - aceptable para un
-    primer video del partido completo, se puede prolijar mas adelante si hace falta precision
+    copy (sin recodificar) en las dos etapas: rápido y liviano, a costa de que el corte final
+    puede quedar en el keyframe más cercano en vez de al segundo exacto — aceptable para un
+    primer video del partido completo, se puede prolijar más adelante si hace falta precisión
     al frame."""
     concat_list = tmp_dir / f"{match_id}.concat.txt"
     joined = tmp_dir / f"{match_id}.joined.mp4"
@@ -155,18 +156,18 @@ def build_clip(
 
     joined_res = run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(joined)])
     if joined_res.returncode != 0:
-        log("uploader", f"ffmpeg concat fallo para {match_id}: {joined_res.stderr[-500:]}")
+        log("uploader", f"ffmpeg concat falló para {match_id}: {joined_res.stderr[-500:]}")
         return None
 
     first_start = segments[0][0]
     offset_start = max(0.0, (window_start - first_start).total_seconds())
     duration = (window_end - window_start).total_seconds()
 
-    # OJO con el orden aca: "-ss" ANTES de "-i" (seek de entrada) + "-t" (duracion) despues.
-    # Con -c copy, poner "-ss"/"-to" como opciones de SALIDA (despues de -i) da resultados
-    # incorrectos - probado empiricamente: devuelve un archivo con una duracion que no
-    # corresponde a la ventana pedida. "-ss" de entrada + "-t" de duracion es la combinacion
-    # que realmente arranca en el offset pedido (con el corrimiento normal al keyframe mas
+    # OJO con el orden acá: "-ss" ANTES de "-i" (seek de entrada) + "-t" (duración) después.
+    # Con -c copy, poner "-ss"/"-to" como opciones de SALIDA (después de -i) da resultados
+    # incorrectos — probado empíricamente: devuelve un archivo con una duración que no
+    # corresponde a la ventana pedida. "-ss" de entrada + "-t" de duración es la combinación
+    # que realmente arranca en el offset pedido (con el corrimiento normal al keyframe más
     # cercano, dado que no se recodifica) y dura lo que corresponde.
     trim_res = run(
         ["ffmpeg", "-y", "-ss", str(offset_start), "-i", str(joined), "-t", str(duration), "-c", "copy", str(trimmed)]
@@ -174,7 +175,7 @@ def build_clip(
     joined.unlink(missing_ok=True)
     concat_list.unlink(missing_ok=True)
     if trim_res.returncode != 0:
-        log("uploader", f"ffmpeg trim fallo para {match_id}: {trim_res.stderr[-500:]}")
+        log("uploader", f"ffmpeg trim falló para {match_id}: {trim_res.stderr[-500:]}")
         return None
 
     return trimmed
@@ -191,7 +192,7 @@ def upload_clip(cfg: dict, match_id: str, clip_path: Path) -> bool:
         ]
     )
     if result.returncode != 0:
-        log("uploader", f"curl fallo subiendo {match_id}: {result.stderr.strip()}")
+        log("uploader", f"curl falló subiendo {match_id}: {result.stderr.strip()}")
         return False
 
     *body_lines, status_code = result.stdout.rsplit("\n", 1)
@@ -199,8 +200,44 @@ def upload_clip(cfg: dict, match_id: str, clip_path: Path) -> bool:
     if ok:
         log("uploader", f"Partido {match_id} subido OK (HTTP {status_code.strip()})")
     else:
-        log("uploader", f"Subida de {match_id} devolvio HTTP {status_code.strip()}: {''.join(body_lines)[:300]}")
+        log("uploader", f"Subida de {match_id} devolvió HTTP {status_code.strip()}: {''.join(body_lines)[:300]}")
     return ok
+
+
+def archive_to_sd(cfg: dict, match_id: str, clip_path: Path) -> None:
+    """Copia a la SD (vía Termux SAF) el clip de un partido que YA se subió con éxito al
+    servidor — un respaldo extra, no el camino principal. Si SAF_BACKUP_DIR_URI no está
+    configurado (instalación sin SD, o en Linux/Raspberry en vez de Termux/Android), esto no
+    hace nada. Si algo falla acá no es grave: el video ya está en el servidor, así que solo
+    se loguea y se sigue — nunca debe tirar abajo el loop principal por esto."""
+    folder_uri = cfg.get("SAF_BACKUP_DIR_URI", "").strip()
+    if not folder_uri:
+        return
+
+    filename = f"{match_id}.mp4"
+    create_res = run(["termux-saf-create", "-t", "video/mp4", folder_uri, filename])
+    if create_res.returncode != 0:
+        log("uploader", f"Respaldo a SD de {match_id}: no se pudo crear el archivo ({create_res.stderr.strip()})")
+        return
+
+    doc_uri = create_res.stdout.strip()
+    if not doc_uri:
+        log("uploader", f"Respaldo a SD de {match_id}: termux-saf-create no devolvió una URI.")
+        return
+
+    try:
+        with open(clip_path, "rb") as f:
+            write_res = subprocess.run(["termux-saf-write", doc_uri], stdin=f, capture_output=True)
+    except Exception as exc:
+        log("uploader", f"Respaldo a SD de {match_id}: error copiando el archivo ({exc!r})")
+        return
+
+    if write_res.returncode != 0:
+        stderr = write_res.stderr.decode(errors="replace").strip() if write_res.stderr else ""
+        log("uploader", f"Respaldo a SD de {match_id}: termux-saf-write falló ({stderr})")
+        return
+
+    log("uploader", f"Respaldo a SD de {match_id} copiado OK.")
 
 
 def cleanup_old_segments(recordings_dir: Path, retention_hours: float) -> None:
@@ -233,7 +270,7 @@ def process_once(cfg: dict) -> None:
 
         covering = segments_for_window(segments, window_start, window_end, segment_seconds)
         if covering is None:
-            log("uploader", f"Partido {match_id}: todavia no hay grabacion local que cubra ese horario, se reintenta luego.")
+            log("uploader", f"Partido {match_id}: todavía no hay grabación local que cubra ese horario, se reintenta luego.")
             continue
 
         clip = build_clip(covering, window_start, window_end, tmp_dir, match_id)
@@ -241,7 +278,9 @@ def process_once(cfg: dict) -> None:
             continue
 
         try:
-            upload_clip(cfg, match_id, clip)
+            uploaded = upload_clip(cfg, match_id, clip)
+            if uploaded:
+                archive_to_sd(cfg, match_id, clip)
         finally:
             clip.unlink(missing_ok=True)
 
