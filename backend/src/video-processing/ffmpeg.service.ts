@@ -129,15 +129,31 @@ export class FfmpegService {
     outputDir: string,
     opts: { intervalSeconds?: number; columns?: number; rows?: number; tileWidth?: number } = {},
   ): Promise<{ spriteFile: string; vttFile: string }> {
-    const interval = opts.intervalSeconds ?? 5;
     const columns = opts.columns ?? 10;
     const rows = opts.rows ?? 10;
     const tileWidth = opts.tileWidth ?? 160;
+    const maxTiles = columns * rows;
 
     await fs.mkdir(outputDir, { recursive: true });
     const spriteFile = 'sprite.jpg';
     const vttFile = 'thumbnails.vtt';
     const tileHeight = Math.round((tileWidth * 9) / 16);
+
+    // El filtro `tile` de FFmpeg junta `columns*rows` frames en una sola imagen de salida; si
+    // el video genera MÁS frames que eso (partido largo + intervalo fijo chico), el filtro
+    // intenta escribir una SEGUNDA imagen de sprite al mismo nombre de archivo fijo
+    // ("sprite.jpg", sin patrón %d/-update), y FFmpeg aborta con "Cannot write more than one
+    // file with the same name" (bug real encontrado 2026-10-01 con el primer partido REAL de
+    // 1 hora que pasó por el pipeline: con el intervalo fijo de 5s, cualquier video de más de
+    // 500s —columns*rows*intervalSeconds— ya generaba más de 100 frames y rompía esto; todos
+    // los videos usados hasta esa fecha habían sido demos/pruebas cortas, por eso no se había
+    // visto antes). Fix: el intervalo entre miniaturas se agranda dinámicamente según la
+    // duración real del video, para que SIEMPRE quepan en una sola grilla sin importar cuánto
+    // dure el partido. Para un video corto (menos de columns*rows*intervalSeconds) el
+    // comportamiento no cambia en nada respecto a antes.
+    const probeResult = await this.probe(inputPath);
+    const minInterval = opts.intervalSeconds ?? 5;
+    const interval = Math.max(minInterval, probeResult.durationSeconds / maxTiles);
 
     await execFileAsync('ffmpeg', [
       '-y',
@@ -147,8 +163,7 @@ export class FfmpegService {
       path.join(outputDir, spriteFile),
     ]);
 
-    const probeResult = await this.probe(inputPath);
-    const totalTiles = Math.min(columns * rows, Math.ceil(probeResult.durationSeconds / interval));
+    const totalTiles = Math.min(maxTiles, Math.ceil(probeResult.durationSeconds / interval));
     const vttLines = ['WEBVTT', ''];
     for (let i = 0; i < totalTiles; i++) {
       const start = i * interval;
