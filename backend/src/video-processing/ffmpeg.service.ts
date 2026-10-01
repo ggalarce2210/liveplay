@@ -11,6 +11,7 @@ export interface ProbeResult {
   width: number;
   height: number;
   fps: number;
+  videoCodec: string;
 }
 
 export interface HlsSegmentInfo {
@@ -37,7 +38,7 @@ export class FfmpegService {
     const { stdout } = await execFileAsync('ffprobe', [
       '-v', 'error',
       '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height,r_frame_rate',
+      '-show_entries', 'stream=width,height,r_frame_rate,codec_name',
       '-show_entries', 'format=duration',
       '-of', 'json',
       inputPath,
@@ -50,14 +51,27 @@ export class FfmpegService {
       width: stream.width ?? 0,
       height: stream.height ?? 0,
       fps: den ? num / den : num,
+      videoCodec: stream.codec_name ?? '',
     };
   }
 
   /**
    * Genera un HLS VOD real: manifest .m3u8 + segmentos .ts de ~6s.
-   * Video: `-c:v copy` evita re-codificar (rápido, sin costo de CPU) cuando el input ya es
-   * H.264, que es el caso normal de cámaras IP/NVR — para codecs de video variados, en el
-   * futuro se podría forzar `-c:v libx264`.
+   *
+   * Video: antes esto era siempre `-c:v copy` (evita re-codificar: rápido, sin costo de CPU)
+   * asumiendo que el input ya viene en H.264, el caso más común en cámaras IP/NVR. Bug real
+   * encontrado 2026-10-01 con el primer partido real grabado por una cámara Dahua de la casa
+   * del usuario: esa cámara graba en **HEVC/H.265** (confirmado con `ffprobe` sobre la
+   * grabación real), y los navegadores (Chrome incluido) no soportan decodificar HEVC vía
+   * Media Source Extensions (lo que usa hls.js) — el resultado es un reproductor que carga el
+   * manifest y muestra los controles/timeline con normalidad, pero la imagen queda
+   * completamente negra, porque el video nunca se puede decodificar. Como esto ya estaba
+   * anotado como riesgo futuro en el comentario original de esta función (nunca se había
+   * disparado porque todas las pruebas anteriores usaban video sintético H.264 generado con
+   * FFmpeg), ahora se hace lo que ese comentario proponía: `probe()` primero, y si el codec de
+   * video de origen no es H.264, se re-codifica a `libx264` (con `-threads 1`, mismo criterio
+   * de `generateClip`, para no competir por CPU en la instancia chica de Render); si ya es
+   * H.264 se sigue copiando tal cual, sin perder la velocidad en el caso más común.
    *
    * Audio: se fuerza `-c:a aac` en vez de copiarlo tal cual (2026-09-19, pregunta del
    * cliente sobre si el audio de la cámara se va a escuchar). Muchas cámaras IP económicas
@@ -74,10 +88,22 @@ export class FfmpegService {
     const manifestFile = 'master.m3u8';
     const segmentPattern = 'segment_%05d.ts';
 
+    const probeResult = await this.probe(inputPath);
+    const needsTranscode = probeResult.videoCodec !== 'h264';
+    const videoArgs = needsTranscode
+      ? ['-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1']
+      : ['-c:v', 'copy'];
+    if (needsTranscode) {
+      this.logger.warn(
+        `generateHls: video de origen en codec "${probeResult.videoCodec}" (no H.264) — ` +
+          're-codificando a libx264 para que sea reproducible en el navegador.',
+      );
+    }
+
     await execFileAsync('ffmpeg', [
       '-y',
       '-i', inputPath,
-      '-c:v', 'copy',
+      ...videoArgs,
       '-c:a', 'aac',
       '-b:a', '128k',
       '-start_number', '0',
