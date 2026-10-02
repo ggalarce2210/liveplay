@@ -45,12 +45,30 @@ export default function AdminDashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [storage, setStorage] = useState<Storage | null>(null);
   const [cameras, setCameras] = useState<Camera[]>([]);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  function loadStorage() {
+    api.get<Storage>('/admin/storage').then(setStorage);
+  }
 
   useEffect(() => {
     api.get<Stats>('/admin/stats').then(setStats);
-    api.get<Storage>('/admin/storage').then(setStorage);
+    loadStorage();
     api.get<Camera[]>('/cameras').then(setCameras);
   }, []);
+
+  async function onDeleteVideo(id: string) {
+    if (!confirm('Borrar este video? Esta accion no se puede deshacer - el partido queda sin video.')) return;
+    setDeletingId(id);
+    try {
+      await api.delete(`/videos/${id}`);
+      loadStorage();
+    } catch {
+      alert('No se pudo borrar el video.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const usedPct = storage ? (storage.usedBytes / storage.quotaBytes) * 100 : 0;
 
@@ -117,11 +135,22 @@ export default function AdminDashboardPage() {
                     <h3 className="mb-2 mt-4 text-xs font-semibold uppercase text-ink-400">Videos mas pesados</h3>
                     <div className="space-y-1 text-xs text-ink-300">
                       {storage.heaviestVideos.slice(0, 5).map((v: any) => (
-                        <div key={v.id} className="flex justify-between">
+                        <div key={v.id} className="flex items-center justify-between gap-2">
                           <span>
                             {v.match?.court?.name} · {v.match?.date}
                           </span>
-                          <span>{formatBytes(v.sizeBytes ?? 0)}</span>
+                          <span className="flex items-center gap-2">
+                            {formatBytes(v.sizeBytes ?? 0)}
+                            <button
+                              type="button"
+                              onClick={() => onDeleteVideo(v.id)}
+                              disabled={deletingId === v.id}
+                              className="text-red-400 hover:text-red-300 disabled:opacity-50"
+                              title="Borrar video"
+                            >
+                              {deletingId === v.id ? '…' : '🗑'}
+                            </button>
+                          </span>
                         </div>
                       ))}
                     </div>
