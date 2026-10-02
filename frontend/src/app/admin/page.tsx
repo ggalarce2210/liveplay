@@ -21,6 +21,7 @@ interface Storage {
   usedBytes: number;
   availableBytes: number;
   heaviestVideos: any[];
+  failedVideos: any[];
   oldMatchesCount: number;
 }
 
@@ -154,6 +155,35 @@ export default function AdminDashboardPage() {
                         </div>
                       ))}
                     </div>
+
+                    {storage.failedVideos.length > 0 && (
+                      <>
+                        <h3 className="mb-2 mt-4 text-xs font-semibold uppercase text-ink-400">
+                          Videos con error ({storage.failedVideos.length})
+                        </h3>
+                        <div className="space-y-1 text-xs text-ink-300">
+                          {storage.failedVideos.map((v: any) => (
+                            <div key={v.id} className="flex items-center justify-between gap-2">
+                              <span>
+                                {v.match?.court?.name} · {v.match?.date}
+                              </span>
+                              <span className="flex items-center gap-2">
+                                <span className="text-red-400">Error</span>
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteVideo(v.id)}
+                                  disabled={deletingId === v.id}
+                                  className="text-red-400 hover:text-red-300 disabled:opacity-50"
+                                  title="Borrar video"
+                                >
+                                  {deletingId === v.id ? '…' : '🗑'}
+                                </button>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </>
                 )}
               </div>
