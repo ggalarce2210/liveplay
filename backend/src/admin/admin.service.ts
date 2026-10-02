@@ -62,11 +62,21 @@ export class AdminService {
     const cutoff = ninetyDaysAgo.toISOString().slice(0, 10);
     const oldMatches = await this.db.query.matches.findMany({ where: lt(matches.date, cutoff), columns: { id: true } });
 
+    // Un video FAILED nunca llega a tener sizeBytes (el procesamiento no termino), asi que
+    // nunca aparece en `allVideos` de arriba — sin esto, un admin no tenia forma de ver ni
+    // borrar los videos que quedaron rotos/colgados en error.
+    const failedVideos = await this.db.query.videos.findMany({
+      where: eq(videos.status, 'FAILED'),
+      with: { match: { with: { court: true, complex: true } } },
+      orderBy: [desc(videos.updatedAt)],
+    });
+
     return {
       quotaBytes: DEFAULT_QUOTA_BYTES,
       usedBytes,
       availableBytes: DEFAULT_QUOTA_BYTES - usedBytes,
       heaviestVideos: allVideos.slice(0, 10),
+      failedVideos,
       oldMatchesCount: oldMatches.length,
     };
   }
