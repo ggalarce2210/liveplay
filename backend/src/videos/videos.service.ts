@@ -1,15 +1,21 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { asc, eq } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { videos } from '../db/schema';
 import { StreamTokenService } from '../storage/stream-token.service';
+import { STORAGE_DRIVER } from '../storage/storage.module';
+import { StorageDriver } from '../storage/storage.types';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 
 const MANIFEST_URL_TTL_SECONDS = 60 * 60 * 4; // 4hs: suficiente para ver el partido completo
 
 @Injectable()
 export class VideosService {
-  constructor(private dbService: DbService, private streamTokens: StreamTokenService) {}
+  constructor(
+    private dbService: DbService,
+    private streamTokens: StreamTokenService,
+    @Inject(STORAGE_DRIVER) private storage: StorageDriver,
+  ) {}
   private get db() {
     return this.dbService.db;
   }
@@ -66,5 +72,19 @@ export class VideosService {
       width: video.width,
       height: video.height,
     };
+  }
+
+  /**
+   * Borra un video: primero los archivos reales en storage (HLS, segmentos, poster, thumbnails
+   * — todo vive bajo `storageBaseKey`, ver storage.types.ts) y recién después la fila en DB. El
+   * partido (`matches`) NO se borra, solo queda sin video asociado — para liberar espacio desde
+   * el panel de admin sin perder el registro del partido en sí.
+   */
+  async remove(id: string) {
+    const video = await this.db.query.videos.findFirst({ where: eq(videos.id, id) });
+    if (!video) throw new NotFoundException('Video no encontrado');
+    await this.storage.deletePrefix(video.storageBaseKey);
+    const [deleted] = await this.db.delete(videos).where(eq(videos.id, id)).returning();
+    return deleted;
   }
 }
