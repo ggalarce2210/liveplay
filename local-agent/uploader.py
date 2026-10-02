@@ -157,6 +157,14 @@ def build_clip(
     joined_res = run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-c", "copy", str(joined)])
     if joined_res.returncode != 0:
         log("uploader", f"ffmpeg concat falló para {match_id}: {joined_res.stderr[-500:]}")
+        # Bug real encontrado el 2026-10-01: acá faltaba este cleanup. Si el concat falla (por
+        # ejemplo por un segmento corrupto), ffmpeg puede haber dejado un "joined.mp4" parcial
+        # escrito en tmp_dir, y como este método devolvía None antes de llegar a los unlink() de
+        # más abajo, ese archivo quedaba huérfano para siempre — con muchos partidos pendientes
+        # reintentando cada POLL_SECONDS, esto fue llenando el almacenamiento (muy chico en un TV
+        # box) en silencio hasta dejarlo sin espacio.
+        joined.unlink(missing_ok=True)
+        concat_list.unlink(missing_ok=True)
         return None
 
     first_start = segments[0][0]
@@ -247,6 +255,22 @@ def cleanup_old_segments(recordings_dir: Path, retention_hours: float) -> None:
             path.unlink(missing_ok=True)
 
 
+def cleanup_stale_tmp_files(tmp_dir: Path, max_age_hours: float = 2.0) -> None:
+    """Red de seguridad además del cleanup explícito en build_clip(): borra cualquier archivo
+    de trabajo (*.joined.mp4, *.concat.txt, *.mp4 sueltos) que haya quedado en TMP_DIR por más
+    de max_age_hours. En uso normal esta carpeta debería vaciarse sola en cada vuelta; esto
+    cubre el caso de que el proceso se corte a mitad de un build_clip() y deje algo colgado."""
+    if not tmp_dir.exists():
+        return
+    cutoff = time.time() - max_age_hours * 3600
+    for path in tmp_dir.glob("*"):
+        try:
+            if path.is_file() and path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
 def process_once(cfg: dict) -> None:
     recordings_dir = Path(cfg["RECORDINGS_DIR"])
     tmp_dir = Path(cfg["TMP_DIR"])
@@ -254,6 +278,7 @@ def process_once(cfg: dict) -> None:
     buffer_minutes = int(cfg["BUFFER_MINUTES"])
 
     cleanup_old_segments(recordings_dir, float(cfg["RETENTION_HOURS"]))
+    cleanup_stale_tmp_files(tmp_dir)
 
     pending = fetch_pending_matches(cfg)
     if not pending:
