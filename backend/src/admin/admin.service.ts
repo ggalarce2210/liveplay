@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { users, matches, videos, courts, cameras, clips, auditLogs } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
@@ -62,11 +62,13 @@ export class AdminService {
     const cutoff = ninetyDaysAgo.toISOString().slice(0, 10);
     const oldMatches = await this.db.query.matches.findMany({ where: lt(matches.date, cutoff), columns: { id: true } });
 
-    // Un video FAILED nunca llega a tener sizeBytes (el procesamiento no termino), asi que
-    // nunca aparece en `allVideos` de arriba — sin esto, un admin no tenia forma de ver ni
-    // borrar los videos que quedaron rotos/colgados en error.
+    // Un video FAILED (o uno que quedo PROCESSING colgado, p.ej. porque el worker se
+    // reinicio a mitad de un job) nunca llega a tener sizeBytes, asi que nunca aparece en
+    // `allVideos` de arriba — sin esto, un admin no tenia forma de ver ni borrar los videos
+    // que quedaron rotos/colgados en error o trabados procesando (y que si no se borran
+    // pueden volver a encolarse solos y seguir ocupando el unico worker de la cola).
     const failedVideos = await this.db.query.videos.findMany({
-      where: eq(videos.status, 'FAILED'),
+      where: inArray(videos.status, ['FAILED', 'PROCESSING']),
       with: { match: { with: { court: true, complex: true } } },
       orderBy: [desc(videos.updatedAt)],
     });
