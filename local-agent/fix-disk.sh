@@ -22,7 +22,33 @@
 #      moverse ahi de forma permanente en vez de la interna.
 set -uo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Bug real encontrado el 2026-10-04 (segunda vuelta del mismo dia): pensado para correrse via
+# "curl ... | bash" (ver el comentario de arriba), pero en ESE modo de invocacion no hay ningun
+# archivo real en disco - se lee todo por stdin - asi que "${BASH_SOURCE[0]}" queda sin definir, y
+# con "set -u" activado el script moria al instante con "BASH_SOURCE[0]: unbound variable" antes
+# de llegar siquiera a tocar nada. Fix: usar "${BASH_SOURCE[0]:-}" (nunca revienta por variable no
+# definida) y, si queda vacio (justo el caso de curl|bash), buscar la carpeta real del agente ya
+# instalado en vez de intentar ubicarse a si mismo - total este script no sirve para nada si el
+# agente no esta ya clonado en el dispositivo.
+DIR=""
+self_path="${BASH_SOURCE[0]:-}"
+if [ -n "$self_path" ] && [ -f "$self_path" ]; then
+  DIR="$(cd "$(dirname "$self_path")" && pwd)"
+fi
+if [ -z "$DIR" ] || [ ! -f "$DIR/lib.sh" ]; then
+  for candidate in "$HOME"/liveplay-repo/local-agent "$HOME"/liveplay-repro/local-agent "$HOME"/*/local-agent; do
+    if [ -f "$candidate/lib.sh" ]; then
+      DIR="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$DIR" ] || [ ! -f "$DIR/lib.sh" ]; then
+  echo "No encontre la carpeta local-agent del repo ya clonado (busque en \$HOME/liveplay-repo/local-agent" >&2
+  echo "y similares). Este script asume que ya instalaste el agente antes - si todavia no lo hiciste," >&2
+  echo "segui los pasos de backend/AGENTE.md primero." >&2
+  exit 1
+fi
 # shellcheck disable=SC1091
 source "$DIR/lib.sh"
 load_agent_config || exit 1
