@@ -28,7 +28,11 @@ chmod +x "$DIR"/*.sh "$DIR"/uploader.py
 echo
 echo "== Configurando el arranque automatico (Termux:Boot) =="
 mkdir -p "$HOME/.termux/boot"
-cp "$DIR/termux-boot-start.sh" "$HOME/.termux/boot/start-liveplay-agent.sh"
+# El placeholder __LIVEPLAY_AGENT_DIR__ de termux-boot-start.sh se reemplaza acá por la ruta
+# real de ESTE checkout - antes la ruta venia hardcodeada como "liveplay-repo" en el propio
+# archivo, y rompia cualquier clon con otro nombre de carpeta (ver el comentario largo en
+# termux-boot-start.sh para el bug real que esto corrige, 2026-09-18/19 y 2026-10-01).
+sed "s|__LIVEPLAY_AGENT_DIR__|$DIR|g" "$DIR/termux-boot-start.sh" > "$HOME/.termux/boot/start-liveplay-agent.sh"
 chmod +x "$HOME/.termux/boot/start-liveplay-agent.sh"
 
 cat <<'EOF'
