@@ -8,7 +8,7 @@ import LogoMark from './LogoMark';
 
 const PLAYER_LINKS = [
   { href: '/dashboard', label: 'Mis partidos', icon: '🏠' },
-  { href: '/dashboard/clips', label: 'Mis clips', icon: '⭐' },
+  { href: '/dashboard/clips', label: 'Mis momentos', icon: '⭐' },
   { href: '/dashboard/notifications', label: 'Notificaciones', icon: '🔔' },
   { href: '/dashboard/profile', label: 'Mi perfil', icon: '👤' },
 ];
