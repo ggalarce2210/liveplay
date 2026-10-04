@@ -3,9 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { courts, matches } from '../db/schema';
-import { zonedTimeToUtc } from '../common/timezone';
-
-const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
+import { DEFAULT_TIMEZONE, zonedTimeToUtc } from '../common/timezone';
 
 /**
  * Forma esperada de `courts.operatingHours` (jsonb) cuando se usa para generar partidos
