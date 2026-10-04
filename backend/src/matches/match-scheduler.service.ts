@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { and, eq, gte, lte } from 'drizzle-orm';
+import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { courts, matches } from '../db/schema';
 import { DEFAULT_TIMEZONE, zonedTimeToUtc } from '../common/timezone';
@@ -81,6 +81,56 @@ export class MatchSchedulerService {
     if (!hasValidSchedule(schedule)) return 0;
     const timezone = court.complex?.timezone || DEFAULT_TIMEZONE;
     return this.ensureUpcomingMatchesForCourt(court.id, court.complexId, court.sportType, schedule, timezone);
+  }
+
+  /**
+   * Poda los turnos sin video que quedaron huérfanos al cambiar el horario de una cancha
+   * (bug real reportado 2026-10-04: el usuario reconfiguró "Los Pinos" para que arranque a las
+   * 13hs, pero 5 turnos ya generados con el horario viejo —8,9,10,11,12hs de ese mismo día—
+   * seguían apareciendo en el buscador, porque `ensureUpcomingMatchesForCourt` solo AGREGA los
+   * turnos que faltan según el horario vigente, nunca borra los que dejaron de corresponder a
+   * uno viejo). Se llama solo al guardar un horario nuevo desde `CourtsService.update()`, no en
+   * cada vuelta del cron horario — así el radio de acción queda acotado al momento exacto en
+   * que el admin cambia el horario, y no a una limpieza continua que podría interferir con un
+   * partido puntual cargado a mano fuera de grilla.
+   *
+   * Nunca se toca un turno que ya tiene un video asociado (aunque ya no entre en el horario
+   * nuevo) ni uno que no esté en estado `SCHEDULED` — solo se borran placeholders vacíos que
+   * el propio generador automático creó y que el horario actual ya no contempla.
+   */
+  async pruneStaleSlots(courtId: string) {
+    const court = await this.db.query.courts.findFirst({ where: eq(courts.id, courtId), with: { complex: true } });
+    if (!court) return 0;
+    const schedule = court.operatingHours as CourtTurnSchedule | null;
+    // Sin un horario válido para comparar, no hay forma de saber qué turno "ya no corresponde"
+    // — no se borra nada (evita un vaciado accidental si se guarda operatingHours incompleto).
+    if (!hasValidSchedule(schedule)) return 0;
+    const timezone = court.complex?.timezone || DEFAULT_TIMEZONE;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const horizonEnd = new Date(today);
+    horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
+
+    const validKeys = new Set(this.buildSlots(today, horizonEnd, schedule, timezone).map((s) => s.startTime.getTime()));
+
+    const candidates = await this.db.query.matches.findMany({
+      where: and(
+        eq(matches.courtId, courtId),
+        eq(matches.status, 'SCHEDULED'),
+        gte(matches.startTime, today),
+        lte(matches.startTime, horizonEnd),
+      ),
+      columns: { id: true, startTime: true },
+      with: { video: { columns: { id: true } } },
+    });
+
+    const staleIds = candidates.filter((m) => !m.video && !validKeys.has(m.startTime.getTime())).map((m) => m.id);
+    if (staleIds.length === 0) return 0;
+
+    await this.db.delete(matches).where(inArray(matches.id, staleIds));
+    this.logger.log(`Podados ${staleIds.length} turnos sin video que quedaron fuera del horario actualizado de la cancha ${courtId}.`);
+    return staleIds.length;
   }
 
   private async ensureUpcomingMatchesForCourt(
