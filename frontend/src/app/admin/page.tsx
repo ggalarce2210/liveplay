@@ -159,7 +159,7 @@ export default function AdminDashboardPage() {
                     {storage.failedVideos.length > 0 && (
                       <>
                         <h3 className="mb-2 mt-4 text-xs font-semibold uppercase text-ink-400">
-                          Videos con error ({storage.failedVideos.length})
+                          Videos con error o trabados ({storage.failedVideos.length})
                         </h3>
                         <div className="space-y-1 text-xs text-ink-300">
                           {storage.failedVideos.map((v: any) => (
@@ -168,7 +168,9 @@ export default function AdminDashboardPage() {
                                 {v.match?.court?.name} · {v.match?.date}
                               </span>
                               <span className="flex items-center gap-2">
-                                <span className="text-red-400">Error</span>
+                                <span className={v.status === 'PROCESSING' ? 'text-amber-400' : 'text-red-400'}>
+                                  {v.status === 'PROCESSING' ? 'Procesando' : 'Error'}
+                                </span>
                                 <button
                                   type="button"
                                   onClick={() => onDeleteVideo(v.id)}
