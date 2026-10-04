@@ -198,7 +198,6 @@ export default function MatchDetailPage() {
                   Crear clip
                 </button>
               </form>
-              {clipMessage && <p className="mt-2 text-xs text-ink-400">{clipMessage}</p>}
             </div>
           </div>
 
@@ -219,6 +218,22 @@ export default function MatchDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal de aviso al crear un clip (reemplaza el texto inline que quedaba perdido debajo
+          del formulario y nunca se cerraba solo — ahora requiere un OK explícito del usuario). */}
+      {clipMessage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={() => setClipMessage(null)}
+        >
+          <div className="card max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm text-ink-200">{clipMessage}</p>
+            <button onClick={() => setClipMessage(null)} className="btn-primary mt-4 w-full">
+              OK
+            </button>
+          </div>
+        </div>
+      )}
     </AuthGuard>
   );
 }
