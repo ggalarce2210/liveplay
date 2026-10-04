@@ -61,3 +61,74 @@ export function zonedTimeToUtc(dateStr: string, timeStr: string, timeZone: strin
 export function formatInTimeZone(date: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date);
 }
+
+/**
+ * Único huso horario que maneja este cliente hoy (todos sus complejos operan acá) — fallback
+ * cuando `complex.timezone` no está cargado. Fuente única: antes `MatchSchedulerService`,
+ * `MatchesService` y `frontend/src/lib/format.ts` tenían cada uno su propia copia de este mismo
+ * string literal.
+ */
+export const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
+
+/**
+ * "Hoy" como fecha de calendario ("YYYY-MM-DD") en el huso horario indicado — NO en el huso del
+ * servidor. Se usa `Intl.DateTimeFormat` con `en-CA` porque ese locale ya formatea en
+ * `YYYY-MM-DD`.
+ */
+export function todayInTimeZone(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(
+    new Date(),
+  );
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+// Las siguientes dos funciones solo hacen aritmética de CALENDARIO sobre un string "YYYY-MM-DD"
+// (sumar/restar días o meses) — se anclan a mediodía UTC únicamente para evitar que un
+// `setDate`/`setMonth` cruce un borde de horario de verano en el huso horario LOCAL DEL
+// SERVIDOR y corra el día de calendario resultante; no representan ningún instante real ni
+// dependen del huso horario del complejo (eso lo resuelve después `dayRangeUtc`/`zonedTimeToUtc`).
+function toUtcNoon(dateStr: string): Date {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day, 12));
+}
+function fromUtcNoon(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/** Suma (o resta, con `days` negativo) días de calendario a una fecha "YYYY-MM-DD". */
+export function addDaysToDateStr(dateStr: string, days: number): string {
+  const d = toUtcNoon(dateStr);
+  d.setUTCDate(d.getUTCDate() + days);
+  return fromUtcNoon(d);
+}
+
+/** Suma (o resta, con `months` negativo) meses de calendario a una fecha "YYYY-MM-DD". */
+export function addMonthsToDateStr(dateStr: string, months: number): string {
+  const d = toUtcNoon(dateStr);
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return fromUtcNoon(d);
+}
+
+/**
+ * Rango [inicio, fin) del día de calendario `dateStr` en el huso horario indicado, como
+ * instantes UTC reales — pensado para filtrar `matches.startTime` (que sí es un instante UTC)
+ * por "ese día tal como lo vive el complejo", no por el día de calendario DEL SERVIDOR. El techo
+ * es EXCLUSIVO (`fin` = medianoche del día siguiente) para no depender de un "23:59:59.999" que
+ * además nunca es exacto en husos horarios con fracciones de minuto raras.
+ *
+ * Este es el fix del bug real (2026-10-04): `DiscoveryService.matchesByCourt` y
+ * `MatchesService.search` armaban "hoy"/"ayer"/"semana"/"mes" con `new Date()` +
+ * `setHours(0,0,0,0)`, que corre en el huso horario DEL SERVIDOR (UTC en Render) — un turno de
+ * las 21-23hs de Argentina (instante UTC correcto, ya con el fix de `zonedTimeToUtc` en el
+ * generador de turnos) cae recién en el UTC del día SIGUIENTE, así que cualquier filtro de "hoy"
+ * basado en el día UTC del servidor terminaba mostrando los turnos de las 21-23hs de AYER (su
+ * instante UTC sí cae "hoy" en UTC) y escondiendo los de las 21-23hs de HOY (su instante UTC ya
+ * es "mañana" en UTC) — exactamente lo que reportó el usuario viendo el buscador público.
+ */
+export function dayRangeUtc(dateStr: string, timeZone: string): { start: Date; end: Date } {
+  const start = zonedTimeToUtc(dateStr, '00:00', timeZone);
+  const end = zonedTimeToUtc(addDaysToDateStr(dateStr, 1), '00:00', timeZone);
+  return { start, end };
+}
