@@ -1,7 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { and, asc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, eq, gte, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches } from '../db/schema';
+import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, formatInTimeZone, todayInTimeZone } from '../common/timezone';
 
 export interface PublicMatchesQuery {
   courtId: string;
@@ -11,17 +12,6 @@ export interface PublicMatchesQuery {
   datePreset?: 'today' | 'yesterday' | 'week' | 'month';
   timeFrom?: string;
   timeTo?: string;
-}
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function endOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
 }
 
 /**
@@ -43,26 +33,29 @@ export class DiscoveryService {
     if (!query.courtId) throw new BadRequestException('Falta courtId');
     const conditions = [eq(matches.courtId, query.courtId)];
 
-    const now = new Date();
+    // Mismo huso horario que usa el resto del cliente (ver DEFAULT_TIMEZONE) — "hoy"/"ayer" acá
+    // significan el día de calendario tal como lo vive el complejo, no el día UTC del servidor
+    // (ver el comentario largo en `dayRangeUtc`, que documenta el bug real que esto corrige).
+    const today = todayInTimeZone(DEFAULT_TIMEZONE);
     if (query.date) {
       conditions.push(eq(matches.date, query.date));
     } else if (query.dateFrom || query.dateTo) {
       if (query.dateFrom) conditions.push(gte(matches.date, query.dateFrom));
       if (query.dateTo) conditions.push(lte(matches.date, query.dateTo));
     } else if (query.datePreset === 'today') {
-      conditions.push(gte(matches.startTime, startOfDay(now)), lte(matches.startTime, endOfDay(now)));
+      const { start, end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'yesterday') {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      conditions.push(gte(matches.startTime, startOfDay(y)), lte(matches.startTime, endOfDay(y)));
+      const { start, end } = dayRangeUtc(addDaysToDateStr(today, -1), DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'week') {
-      const weekAgo = new Date(now);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      conditions.push(gte(matches.startTime, startOfDay(weekAgo)), lte(matches.startTime, endOfDay(now)));
+      const { start } = dayRangeUtc(addDaysToDateStr(today, -7), DEFAULT_TIMEZONE);
+      const { end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'month') {
-      const monthAgo = new Date(now);
-      monthAgo.setMonth(monthAgo.getMonth() - 1);
-      conditions.push(gte(matches.startTime, startOfDay(monthAgo)), lte(matches.startTime, endOfDay(now)));
+      const { start } = dayRangeUtc(addMonthsToDateStr(today, -1), DEFAULT_TIMEZONE);
+      const { end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     }
 
     let result = await this.db.query.matches.findMany({
@@ -75,11 +68,13 @@ export class DiscoveryService {
       orderBy: [asc(matches.startTime)],
     });
 
+    // Mismo bug de huso horario que el de arriba (ver `dayRangeUtc`), en su variante de franja
+    // horaria en vez de día completo: `getHours()`/`getMinutes()` devuelven la hora LOCAL AL
+    // SERVIDOR, no la del complejo. Se formatea con el huso horario real (igual que ya hace
+    // `MatchesService.search` para este mismo filtro) para no repetir el desfasaje de 3hs.
     if (query.timeFrom || query.timeTo) {
       result = result.filter((m) => {
-        const hh = String(m.startTime.getHours()).padStart(2, '0');
-        const mm = String(m.startTime.getMinutes()).padStart(2, '0');
-        const t = `${hh}:${mm}`;
+        const t = formatInTimeZone(m.startTime, DEFAULT_TIMEZONE);
         if (query.timeFrom && t < query.timeFrom) return false;
         if (query.timeTo && t > query.timeTo) return false;
         return true;
