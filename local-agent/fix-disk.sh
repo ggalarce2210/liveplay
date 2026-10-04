@@ -52,7 +52,7 @@ echo "Procesos corriendo ahora:"
 ps aux | grep -E "ffmpeg|record.sh|uploader.py" | grep -v grep || echo "(NINGUNO - algo sigue mal, revisa $LOG_DIR/record-boot.log y $LOG_DIR/uploader-boot.log)"
 
 echo
-echo "== 4) Buscando una SD donde grabar en vej de la interna =="
+echo "== 4) Buscando una SD donde grabar en vez de la interna =="
 found_writable=""
 for d in /storage/*; do
   name="$(basename "$d")"
