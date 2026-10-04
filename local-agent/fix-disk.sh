@@ -13,10 +13,10 @@
 #   1) Muestra cuanto ocupan recordings/ y tmp/ antes de tocar nada.
 #   2) Los vacia (son archivos de trabajo descartables - record.sh y uploader.py los regeneran
 #      solos; nunca se toca config.env ni los logs).
-#   3) Mata record.sh/uploader.py/ffmpeg si quedaron corriendo (aunque sea a medias) y los
-#      vuelve a levantar, invocando el interprete explicito (bash/python3) en vez de depender
-#      del shebang - mismo fix ya aplicado a mano en este dispositivo el 2026-10-01 para el bug
-#      de Termux:Boot, acá se repite para esta relanzada manual.
+#   3) Mata record.sh/uploader.py/ffmpeg/watchdog.sh si quedaron corriendo (aunque sea a medias)
+#      y los vuelve a levantar, invocando el interprete explicito (bash/python3) en vez de
+#      depender del shebang - mismo fix ya aplicado a mano en este dispositivo el 2026-10-01
+#      para el bug de Termux:Boot, acá se repite para esta relanzada manual.
 #   4) Prueba si se puede ESCRIBIR en alguna tarjeta SD montada (cualquier carpeta bajo
 #      /storage/ que no sea la interna) - si encuentra una, lo avisa con instrucciones para
 #      moverse ahi de forma permanente en vez de la interna.
@@ -65,17 +65,23 @@ echo "Listo. Espacio despues de limpiar:"
 df -h /data 2>/dev/null || df -h "$HOME"
 
 echo
-echo "== 3) Reiniciando record.sh y uploader.py =="
+echo "== 3) Reiniciando record.sh, uploader.py y el vigia =="
 pkill -f "record.sh" 2>/dev/null
 pkill -f "uploader.py" 2>/dev/null
+pkill -f "watchdog.sh" 2>/dev/null
 pkill ffmpeg 2>/dev/null
 sleep 1
 command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
 nohup bash "$DIR/record.sh" >> "$LOG_DIR/record-boot.log" 2>&1 &
 nohup python3 "$DIR/uploader.py" >> "$LOG_DIR/uploader-boot.log" 2>&1 &
+# El vigia (agregado el 2026-10-04) solo existe si ya corriste install-termux.sh/git pull con
+# el repo actualizado - si todavia no esta, seguimos sin el en vez de abortar todo el script.
+if [ -f "$DIR/watchdog.sh" ]; then
+  nohup bash "$DIR/watchdog.sh" >> "$LOG_DIR/watchdog-boot.log" 2>&1 &
+fi
 sleep 4
 echo "Procesos corriendo ahora:"
-ps aux | grep -E "ffmpeg|record.sh|uploader.py" | grep -v grep || echo "(NINGUNO - algo sigue mal, revisa $LOG_DIR/record-boot.log y $LOG_DIR/uploader-boot.log)"
+ps aux | grep -E "ffmpeg|record.sh|uploader.py|watchdog.sh" | grep -v grep || echo "(NINGUNO - algo sigue mal, revisa $LOG_DIR/record-boot.log y $LOG_DIR/uploader-boot.log)"
 
 echo
 echo "== 4) Buscando una SD donde grabar en vez de la interna =="
