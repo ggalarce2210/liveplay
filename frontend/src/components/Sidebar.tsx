@@ -39,9 +39,9 @@ export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
     // el wrapper de AppShell le da `h-screen` explícito, así que `h-full` sigue llenando toda
     // la altura ahí también.
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-ink-800 bg-ink-950 px-4 py-6">
-      <Link href="/dashboard" className="mb-8 flex items-center gap-2 px-2" onClick={onNavigate}>
-        <LogoMark className="h-8 w-8 shrink-0" />
-        <span className="text-sm font-bold tracking-tight text-white">
+      <Link href="/dashboard" className="mb-8 flex items-center gap-3 px-2" onClick={onNavigate}>
+        <LogoMark className="h-11 w-11 shrink-0" />
+        <span className="text-lg font-bold tracking-tight text-white">
           Live<span className="text-pitch-400">Play</span>
         </span>
       </Link>
