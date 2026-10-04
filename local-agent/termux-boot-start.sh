@@ -27,4 +27,10 @@ command -v termux-wake-lock >/dev/null 2>&1 && termux-wake-lock
 nohup bash "$DIR/record.sh" >> "$LOG_DIR/record-boot.log" 2>&1 &
 nohup python3 "$DIR/uploader.py" >> "$LOG_DIR/uploader-boot.log" 2>&1 &
 
-echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') agente de LivePlay arrancado (record.sh + uploader.py)" >> "$LOG_DIR/boot.log"
+# Vigia agregado el 2026-10-04: chequea cada pocos minutos que record.sh/ffmpeg/uploader.py
+# sigan vivos y los relanza solo si alguno se murio sin que nadie lo note (ver el comentario
+# largo en watchdog.sh para el incidente real que motivo esto - el disco interno se lleno dos
+# veces el mismo dia en "Complejo Los Pinos" porque ffmpeg/uploader.py se murieron callados).
+nohup bash "$DIR/watchdog.sh" >> "$LOG_DIR/watchdog-boot.log" 2>&1 &
+
+echo "$(date -u +'%Y-%m-%dT%H:%M:%SZ') agente de LivePlay arrancado (record.sh + uploader.py + watchdog.sh)" >> "$LOG_DIR/boot.log"
