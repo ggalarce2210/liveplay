@@ -1,14 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 import { StreamTokenService } from '../storage/stream-token.service';
 import { SearchMatchesDto } from './dto/search-matches.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
-import { formatInTimeZone } from '../common/timezone';
+import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, formatInTimeZone, todayInTimeZone } from '../common/timezone';
 
-const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
 // Decisión del cliente (2026-09-24): los partidos grabados solo quedan disponibles para ver
 // durante 1 semana (los clips generados a partir de ellos NO tienen este límite — ver
 // ClipsController.list, que lee directo de `clips` y nunca pasa por acá). Es un límite de
@@ -16,17 +15,6 @@ const DEFAULT_TIMEZONE = 'America/Argentina/Buenos_Aires';
 // contra cualquier otro filtro de fecha, en vez de vivir como una opción de `datePreset`.
 const MATCH_AVAILABILITY_DAYS = 7;
 const POSTER_URL_TTL_SECONDS = 60 * 60 * 4; // mismo TTL que el resto de las URLs firmadas de video
-
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function endOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
 
 @Injectable()
 export class MatchesService {
@@ -61,33 +49,37 @@ export class MatchesService {
     if (query.courtId) conditions.push(eq(matches.courtId, query.courtId));
     if (query.sportType) conditions.push(eq(matches.sportType, query.sportType));
 
-    const now = new Date();
+    // Mismo huso horario que usa el resto del cliente (ver DEFAULT_TIMEZONE) — "hoy"/"ayer" acá
+    // significan el día de calendario tal como lo vive el complejo, no el día UTC del servidor
+    // (ver el comentario largo en `dayRangeUtc`, que documenta el bug real que esto corrige —
+    // mismo bug que tenía `DiscoveryService.matchesByCourt`, reportado por el usuario viendo el
+    // buscador público mostrar partidos de "ayer" bajo el filtro "Hoy").
+    const today = todayInTimeZone(DEFAULT_TIMEZONE);
     if (query.date) {
       conditions.push(eq(matches.date, query.date));
     } else if (query.dateFrom || query.dateTo) {
       if (query.dateFrom) conditions.push(gte(matches.date, query.dateFrom));
       if (query.dateTo) conditions.push(lte(matches.date, query.dateTo));
     } else if (query.datePreset === 'today') {
-      conditions.push(gte(matches.startTime, startOfDay(now)), lte(matches.startTime, endOfDay(now)));
+      const { start, end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'yesterday') {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      conditions.push(gte(matches.startTime, startOfDay(y)), lte(matches.startTime, endOfDay(y)));
+      const { start, end } = dayRangeUtc(addDaysToDateStr(today, -1), DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'week') {
-      const weekAgo = new Date(now);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      conditions.push(gte(matches.startTime, startOfDay(weekAgo)), lte(matches.startTime, endOfDay(now)));
+      const { start } = dayRangeUtc(addDaysToDateStr(today, -7), DEFAULT_TIMEZONE);
+      const { end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'month') {
-      const monthAgo = new Date(now);
-      monthAgo.setMonth(monthAgo.getMonth() - 1);
-      conditions.push(gte(matches.startTime, startOfDay(monthAgo)), lte(matches.startTime, endOfDay(now)));
+      const { start } = dayRangeUtc(addMonthsToDateStr(today, -1), DEFAULT_TIMEZONE);
+      const { end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     }
 
     // Ventana de disponibilidad de 1 semana (ver constante arriba): se aplica SIEMPRE, con AND,
     // sin importar qué haya elegido el filtro de fecha — no es una opción más, es el límite real
     // de lo que el club deja disponible para reproducir.
-    const availabilityCutoff = new Date(now);
-    availabilityCutoff.setDate(availabilityCutoff.getDate() - MATCH_AVAILABILITY_DAYS);
+    const { start: availabilityCutoff } = dayRangeUtc(addDaysToDateStr(today, -MATCH_AVAILABILITY_DAYS), DEFAULT_TIMEZONE);
     conditions.push(gte(matches.startTime, availabilityCutoff));
 
     let result = await this.db.query.matches.findMany({
