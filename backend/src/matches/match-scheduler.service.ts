@@ -59,13 +59,26 @@ export class MatchSchedulerService {
       with: { complex: true },
     });
     let created = 0;
+    let pruned = 0;
     for (const court of activeCourts) {
       const schedule = court.operatingHours as CourtTurnSchedule | null;
       if (!hasValidSchedule(schedule)) continue;
       const timezone = court.complex?.timezone || DEFAULT_TIMEZONE;
+      // Poda primero los turnos sin video que un horario viejo (ya reemplazado) dejó
+      // huérfanos, y recién después genera los que falten para el horario vigente -- mismo
+      // orden que ya usa CourtsService.update(). Se agregó acá (2026-10-05) porque un caso
+      // real en "Los Pinos" mostró que podar solo al guardar el horario no alcanza: 2 turnos
+      // sobrantes de un cambio de horario anterior quedaron sin podar y recién se notaron
+      // días después, cuando el agente local (caído un rato por el incidente del disco
+      // lleno) los encontró "pendientes" y les subió video real de una franja horaria vacía.
+      // Corriendo también acá, cualquier sobrante de este tipo se limpia solo en la próxima
+      // vuelta del cron (como mucho 1 hora), sin depender de que alguien vuelva a guardar el
+      // horario de la cancha a mano.
+      pruned += await this.pruneStaleSlots(court.id);
       created += await this.ensureUpcomingMatchesForCourt(court.id, court.complexId, court.sportType, schedule, timezone);
     }
     if (created > 0) this.logger.log(`Generados ${created} turnos automáticos.`);
+    if (pruned > 0) this.logger.log(`Podados ${pruned} turnos sin video que quedaron fuera de un horario desactualizado.`);
     return created;
   }
 
