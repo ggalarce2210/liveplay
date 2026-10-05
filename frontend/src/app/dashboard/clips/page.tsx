@@ -101,10 +101,12 @@ export default function ClipsPage() {
                 {STATUS_LABEL[clip.status]}
               </span>
             </div>
-            {clip.match && (
+            {clip.match ? (
               <p className="text-sm text-ink-400">
                 {formatDate(clip.match.date)} · {formatTime(clip.match.startTime)} · {clip.match.court?.name}
               </p>
+            ) : (
+              <p className="text-sm text-ink-500">Partido original vencido (se guarda igual, no tiene límite de tiempo)</p>
             )}
             <p className="mt-1 text-xs text-ink-500">
               {clip.startSeconds.toFixed(0)}s → {clip.endSeconds.toFixed(0)}s ({(clip.endSeconds - clip.startSeconds).toFixed(0)}s)
@@ -129,9 +131,11 @@ export default function ClipsPage() {
                   {busyId === clip.id ? 'Reintentando...' : '↻ Reintentar'}
                 </button>
               )}
-              <Link href={`/matches/${clip.matchId}`} className="btn-secondary !py-2 text-sm">
-                Ver partido
-              </Link>
+              {clip.matchId && (
+                <Link href={`/matches/${clip.matchId}`} className="btn-secondary !py-2 text-sm">
+                  Ver partido
+                </Link>
+              )}
               <button
                 onClick={() => onDelete(clip)}
                 disabled={busyId === clip.id}
