@@ -11,6 +11,14 @@ import { useAuthStore } from '@/lib/auth-store';
 import { Match, PlaybackUrls, Bookmark } from '@/types';
 import { formatClock, formatDate, formatTime } from '@/lib/format';
 
+/** Forma del body de error 409 CLIP_LIMIT_REACHED que manda ClipsController.create(). */
+interface OldestClip {
+  id: string;
+  title: string;
+  status: 'PENDING' | 'READY' | 'FAILED';
+  createdAt: string;
+}
+
 export default function MatchDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -29,6 +37,13 @@ export default function MatchDetailPage() {
   const [clipEnd, setClipEnd] = useState<number | null>(null);
   const [clipTitle, setClipTitle] = useState('');
   const [clipMessage, setClipMessage] = useState<string | null>(null);
+
+  // Tope de 10 clips por usuario (pedido 2026-10-05): si el backend lo rechaza con 409
+  // CLIP_LIMIT_REACHED, mostramos acá mismo los 3 clips más viejos del usuario para que pueda
+  // tildar y borrar los que quiera, sin tener que ir a "Mis momentos" aparte.
+  const [clipLimitInfo, setClipLimitInfo] = useState<{ message: string; oldestClips: OldestClip[] } | null>(null);
+  const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set());
+  const [deletingClips, setDeletingClips] = useState(false);
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
@@ -65,17 +80,59 @@ export default function MatchDetailPage() {
     playerRef.current?.seek(t);
   }
 
-  async function createClip(e: React.FormEvent) {
-    e.preventDefault();
+  /** Intenta crear el clip con los valores marcados ahora mismo. Separado de `createClip` (el
+   *  handler del form) para poder reintentarlo solo, sin un evento de submit real, después de
+   *  que el usuario borre clips viejos desde el modal del tope de 10. */
+  async function submitClip() {
     if (clipStart === null || clipEnd === null || clipEnd <= clipStart) {
       setClipMessage('Marcá primero el inicio y el fin de la jugada.');
       return;
     }
-    await api.post('/clips', { matchId: params.id, title: clipTitle || 'Mi clip', startSeconds: clipStart, endSeconds: clipEnd });
-    setClipMessage('¡Clip en camino! Lo vas a encontrar en "Mis mejores momentos" en unos segundos.');
-    setClipStart(null);
-    setClipEnd(null);
-    setClipTitle('');
+    try {
+      await api.post('/clips', { matchId: params.id, title: clipTitle || 'Mi clip', startSeconds: clipStart, endSeconds: clipEnd });
+      setClipMessage('¡Clip en camino! Lo vas a encontrar en "Mis mejores momentos" en unos segundos.');
+      setClipStart(null);
+      setClipEnd(null);
+      setClipTitle('');
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as { code?: string; message?: string; oldestClips?: OldestClip[] } | null) : null;
+      if (err instanceof ApiError && err.status === 409 && body?.code === 'CLIP_LIMIT_REACHED') {
+        setClipLimitInfo({ message: body.message ?? err.message, oldestClips: body.oldestClips ?? [] });
+        setSelectedToDelete(new Set());
+        return;
+      }
+      setClipMessage(err instanceof ApiError ? err.message : 'No pudimos crear el clip.');
+    }
+  }
+
+  function createClip(e: React.FormEvent) {
+    e.preventDefault();
+    void submitClip();
+  }
+
+  function toggleClipToDelete(id: string, checked: boolean) {
+    setSelectedToDelete((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  /** Borra los clips tildados y, si quedó alguno borrado, reintenta guardar el clip nuevo. */
+  async function deleteSelectedAndRetry() {
+    if (selectedToDelete.size === 0) return;
+    setDeletingClips(true);
+    try {
+      await Promise.all(Array.from(selectedToDelete).map((id) => api.delete(`/clips/${id}`)));
+      setClipLimitInfo(null);
+      setSelectedToDelete(new Set());
+      await submitClip();
+    } catch (err) {
+      setClipMessage(err instanceof ApiError ? err.message : 'No pudimos borrar esos clips.');
+    } finally {
+      setDeletingClips(false);
+    }
   }
 
   async function shareMatch() {
@@ -231,6 +288,64 @@ export default function MatchDetailPage() {
             <button onClick={() => setClipMessage(null)} className="btn-primary mt-4 w-full">
               OK
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tope de 10 clips (2026-10-05): en vez de solo bloquear, le mostramos acá mismo los 3
+          momentos más viejos del usuario para que pueda tildar y borrar los que quiera, y
+          reintentamos guardar el clip nuevo apenas borra alguno. */}
+      {clipLimitInfo && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={() => !deletingClips && setClipLimitInfo(null)}
+        >
+          <div className="card max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm text-ink-200">{clipLimitInfo.message}</p>
+            {clipLimitInfo.oldestClips.length > 0 ? (
+              <>
+                <p className="mb-2 mt-4 text-xs font-semibold uppercase tracking-wide text-ink-400">
+                  Tus momentos más viejos
+                </p>
+                <div className="space-y-2">
+                  {clipLimitInfo.oldestClips.map((c) => (
+                    <label
+                      key={c.id}
+                      className="flex cursor-pointer items-center gap-2 rounded-lg border border-ink-700 px-3 py-2 text-sm text-ink-200"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedToDelete.has(c.id)}
+                        onChange={(e) => toggleClipToDelete(c.id, e.target.checked)}
+                      />
+                      <span className="truncate">{c.title}</span>
+                    </label>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-ink-400">
+                Andá a &quot;Mis momentos&quot; para elegir cuál borrar.
+              </p>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button
+                onClick={() => setClipLimitInfo(null)}
+                disabled={deletingClips}
+                className="btn-secondary flex-1 !py-2 text-sm disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              {clipLimitInfo.oldestClips.length > 0 && (
+                <button
+                  onClick={deleteSelectedAndRetry}
+                  disabled={selectedToDelete.size === 0 || deletingClips}
+                  className="btn-primary flex-1 !py-2 text-sm disabled:opacity-60"
+                >
+                  {deletingClips ? 'Borrando...' : 'Borrar y guardar este clip'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
