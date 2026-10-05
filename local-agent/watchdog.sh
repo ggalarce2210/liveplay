@@ -35,6 +35,19 @@
 # mismo tiempo, duplicando (o cuadriplicando) la velocidad real de consumo de disco sin que se
 # notara en ningun ps aux puntual. Por eso ahora, antes de relanzar record.sh por cualquier
 # motivo, se matan explicitamente TANTO el wrapper COMO cualquier ffmpeg suelto (`stop_record`).
+#
+# Cuarta vuelta (2026-10-05, mismo dia otra vez): el arreglo de la "Tercera vuelta" no alcanzo
+# porque en este TV box puntual ("Los Pinos") el paquete `procps` no esta instalado - no existe
+# el comando `pgrep` (confirmado en vivo: "No command pgrep found"). Como record_alive/
+# ffmpeg_alive/uploader_alive de mas abajo llamaban a `pgrep ... >/dev/null 2>&1`, y ese comando
+# directamente no existe, SIEMPRE devolvian "no esta vivo" (el shell reporta "command not
+# found", codigo de salida distinto de cero) sin importar si record.sh/ffmpeg/uploader.py
+# estaban realmente corriendo o no. Resultado: el vigia creia que todo estaba muerto en CADA
+# vuelta (cada WATCHDOG_INTERVAL_SECONDS) y reiniciaba record.sh sin necesidad - y como
+# stop_record tambien dependia de `pkill`, tampoco mataba al ffmpeg anterior de forma confiable,
+# asi que cada vuelta sumaba un ffmpeg mas sin fin. Por eso ahora ninguna de estas funciones usa
+# pgrep/pkill: todas se arman con `ps aux` + `grep`/`awk`/`kill`, que no dependen de ningun
+# paquete opcional y ya veniamos usando a mano sin problemas en este mismo dispositivo.
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,9 +63,16 @@ log_watchdog() {
   log watchdog "$*" >> "$LOG_DIR/watchdog.log" 2>&1
 }
 
-record_alive() { pgrep -f "record\.sh" >/dev/null 2>&1; }
-ffmpeg_alive() { pgrep -x ffmpeg >/dev/null 2>&1; }
-uploader_alive() { pgrep -f "uploader\.py" >/dev/null 2>&1; }
+# Imprime los PID (columna 2 de `ps aux`) de los procesos cuya linea de comando matchea el
+# patron $1 (regex de grep -E), sin depender de pgrep/pkill - ver "Cuarta vuelta" arriba. El
+# `grep -v grep` saca de la lista al propio proceso grep que hace la busqueda.
+pids_matching() {
+  ps aux 2>/dev/null | grep -E "$1" | grep -v grep | awk '{print $2}'
+}
+
+record_alive() { [ -n "$(pids_matching 'record\.sh')" ]; }
+ffmpeg_alive() { [ -n "$(pids_matching 'ffmpeg')" ]; }
+uploader_alive() { [ -n "$(pids_matching 'uploader\.py')" ]; }
 
 # % de uso (0-100, solo el numero) de la particion que contiene RECORDINGS_DIR - en el TV box
 # de "Los Pinos" es el almacenamiento interno compartido con el resto de Android, el mismo que
@@ -97,11 +117,16 @@ emergency_disk_cleanup() {
 }
 
 # Mata el wrapper de record.sh Y cualquier ffmpeg suelto antes de relanzar - ver el comentario
-# "Tercera vuelta" de arriba. pkill -x ffmpeg es seguro aca: este dispositivo solo graba UNA
-# camara, asi que no hay otro ffmpeg legitimo al que se le pueda pisar el cable.
+# "Tercera vuelta" de arriba (y "Cuarta vuelta" para por que ya no usa pkill). Matar tambien
+# cualquier ffmpeg es seguro aca: este dispositivo solo graba UNA camara, asi que no hay otro
+# ffmpeg legitimo al que se le pueda pisar el cable.
 stop_record() {
-  pkill -f "record\.sh" 2>/dev/null
-  pkill -x ffmpeg 2>/dev/null
+  local pids
+  pids="$(pids_matching 'record\.sh|ffmpeg')"
+  if [ -n "$pids" ]; then
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null
+  fi
 }
 
 start_record() {
