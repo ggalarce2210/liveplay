@@ -285,7 +285,16 @@ export const bookmarks = pgTable('bookmarks', {
 
 export const clips = pgTable('clips', {
   id: id(),
-  matchId: uuid('match_id').notNull().references(() => matches.id, { onDelete: 'cascade' }),
+  // Nullable con onDelete 'set null' (antes 'cascade', not null) desde el 2026-10-05: un clip
+  // es un archivo independiente (storageKey propio, generado por FFmpeg a partir del video
+  // original sin tocarlo), así que no tiene que desaparecer solo porque el partido de origen
+  // se borra — y ahora SÍ se borra de verdad, ver MatchRetentionService (purga partidos de más
+  // de MATCH_RETENTION_DAYS). Si el FK siguiera en cascada, borrar un partido viejo borraría
+  // también los clips ya generados a partir de él (y dejaría su archivo huérfano en el storage
+  // para siempre), contradiciendo la regla ya establecida de que "los clips no vencen" (ver
+  // sección "4 fixes pre-lanzamiento" del resumen del proyecto). Ver migración
+  // 0006_clips_match_id_nullable.sql.
+  matchId: uuid('match_id').references(() => matches.id, { onDelete: 'set null' }),
   createdByUserId: uuid('created_by_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
   startSeconds: doublePrecision('start_seconds').notNull(),
