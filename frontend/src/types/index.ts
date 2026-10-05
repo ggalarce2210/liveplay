@@ -155,13 +155,16 @@ export interface Bookmark {
 
 export interface Clip {
   id: string;
-  matchId: string;
+  // Puede quedar en null: el partido de origen se borra a los 7 días (ver MatchRetentionService
+  // en el backend), pero el clip en sí sigue existiendo — es un archivo independiente.
+  matchId: string | null;
   title: string;
   startSeconds: number;
   endSeconds: number;
   status: 'PENDING' | 'READY' | 'FAILED';
   errorMessage?: string | null;
-  match?: Match;
+  createdAt?: string;
+  match?: Match | null;
 }
 
 export interface PlaybackUrls {
