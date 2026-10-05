@@ -22,6 +22,19 @@
 # ahora chequea el % de disco usado el mismo, de forma independiente de si los procesos estan
 # vivos o no, y si esta critico libera espacio el mismo ANTES de que todo se caiga - no espera a
 # que alguien note el problema y corra fix-disk.sh a mano.
+#
+# Tercera vuelta (2026-10-05, mas tarde el mismo dia): "Los Pinos" volvio a llenar el disco, pero
+# esta vez la causa fue OTRO bug, en el reinicio de record.sh de mas abajo. Cuando record.sh
+# estaba vivo pero sin ffmpeg real adentro, este vigia lo reiniciaba con `pkill -f "record\.sh"` -
+# pero record.sh corre ffmpeg en PRIMER PLANO dentro de su propio loop (sin `exec`), y ese pkill
+# solo matea al wrapper de bash (su linea de comando SI contiene "record.sh"), nunca al ffmpeg
+# que tiene adentro (su linea de comando es "ffmpeg ...", no contiene "record.sh" en ningun
+# lado). Bash no reenvia SIGTERM a sus hijos por default, asi que el ffmpeg viejo quedaba
+# huerfano y siguiendo vivo, grabando en paralelo al ffmpeg nuevo que arrancaba el record.sh
+# relanzado - cada reinicio sumaba un ffmpeg mas, todos escribiendo al mismo RECORDINGS_DIR al
+# mismo tiempo, duplicando (o cuadriplicando) la velocidad real de consumo de disco sin que se
+# notara en ningun ps aux puntual. Por eso ahora, antes de relanzar record.sh por cualquier
+# motivo, se matan explicitamente TANTO el wrapper COMO cualquier ffmpeg suelto (`stop_record`).
 set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -83,6 +96,14 @@ emergency_disk_cleanup() {
   log_watchdog "limpieza de emergencia terminada - disco ahora al ${usage:-?}%"
 }
 
+# Mata el wrapper de record.sh Y cualquier ffmpeg suelto antes de relanzar - ver el comentario
+# "Tercera vuelta" de arriba. pkill -x ffmpeg es seguro aca: este dispositivo solo graba UNA
+# camara, asi que no hay otro ffmpeg legitimo al que se le pueda pisar el cable.
+stop_record() {
+  pkill -f "record\.sh" 2>/dev/null
+  pkill -x ffmpeg 2>/dev/null
+}
+
 start_record() {
   nohup bash "$DIR/record.sh" >> "$LOG_DIR/record-boot.log" 2>&1 &
   log_watchdog "record.sh relanzado (PID $!)"
@@ -104,6 +125,10 @@ while true; do
 
   if ! record_alive; then
     log_watchdog "record.sh no esta corriendo - relanzando"
+    # stop_record por las dudas de que haya quedado un ffmpeg huerfano de un ciclo anterior
+    # (ver "Tercera vuelta" arriba) aunque el wrapper ya este muerto.
+    stop_record
+    sleep 2
     start_record
   elif ! ffmpeg_alive; then
     # El wrapper de record.sh esta vivo pero no tiene ningun ffmpeg real adentro - es
@@ -111,7 +136,7 @@ while true; do
     # ffmpeg solo con su propio loop interno, pero por las dudas reiniciamos el wrapper entero
     # en vez de confiar en que se recupere solo.
     log_watchdog "record.sh esta vivo pero ffmpeg no - wrapper colgado, reiniciando record.sh"
-    pkill -f "record\.sh" 2>/dev/null
+    stop_record
     sleep 2
     start_record
   fi
