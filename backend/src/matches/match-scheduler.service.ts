@@ -3,7 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { and, eq, gte, inArray, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { courts, matches } from '../db/schema';
-import { DEFAULT_TIMEZONE, zonedTimeToUtc } from '../common/timezone';
+import { DEFAULT_TIMEZONE, addDaysToDateStr, todayInTimeZone, zonedTimeToUtc } from '../common/timezone';
 
 /**
  * Forma esperada de `courts.operatingHours` (jsonb) cuando se usa para generar partidos
@@ -120,10 +120,7 @@ export class MatchSchedulerService {
     if (!hasValidSchedule(schedule)) return 0;
     const timezone = court.complex?.timezone || DEFAULT_TIMEZONE;
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const horizonEnd = new Date(today);
-    horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
+    const { today, horizonEnd } = this.horizonRange(timezone);
 
     const validKeys = new Set(this.buildSlots(today, horizonEnd, schedule, timezone).map((s) => s.startTime.getTime()));
 
@@ -154,12 +151,10 @@ export class MatchSchedulerService {
     timezone: string,
   ) {
     // Estas dos fechas solo se usan como límites de búsqueda ("¿hasta cuándo ya hay turnos
-    // generados?"), no representan un horario de turno puntual — no hace falta que estén
-    // ajustadas al minuto exacto del huso horario del complejo, alcanza con no quedar cortos.
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const horizonEnd = new Date(today);
-    horizonEnd.setDate(horizonEnd.getDate() + HORIZON_DAYS);
+    // generados?"), no representan un horario de turno puntual, pero el PISO sí tiene que ser
+    // "hoy" en el huso horario del complejo (ver `horizonRange` / el bug real de 2026-10-05 más
+    // abajo) — alcanza con no quedar cortos del lado del techo.
+    const { today, horizonEnd } = this.horizonRange(timezone);
 
     const slots = this.buildSlots(today, horizonEnd, schedule, timezone);
     if (slots.length === 0) return 0;
@@ -188,6 +183,32 @@ export class MatchSchedulerService {
     if (toInsert.length === 0) return 0;
     await this.db.insert(matches).values(toInsert);
     return toInsert.length;
+  }
+
+  /**
+   * Piso y techo ("hoy" y "hoy + HORIZON_DAYS") de la ventana en la que se generan/podan turnos,
+   * como instantes UTC reales anclados a la MEDIANOCHE DEL COMPLEJO (no del servidor).
+   *
+   * Quinta vuelta (2026-10-05, mas tarde todavia): este metodo reemplaza a un `new Date();
+   * setHours(0,0,0,0)` que quedo sin arreglar ADENTRO de este mismo archivo, pese a que
+   * `common/timezone.ts` ya documenta este bug exacto (ver el comentario largo de
+   * `dayRangeUtc`) y ya se habia corregido en `DiscoveryService`/`MatchesService.search`. El
+   * sintoma real en "Los Pinos": a las 21:46 ART del 2026-10-05 faltaban los turnos de
+   * 21/22/23hs de ESE MISMO dia, y ni el cron horario ni volver a guardar el horario de la
+   * cancha a mano los generaba. Motivo: en ese momento el reloj UTC del servidor YA es
+   * 2026-10-06 (ART = UTC-3, asi que a las 21hs ART el dia UTC ya cambio), asi que `new Date()`
+   * sin huso horario daba "hoy = 2026-10-06" - la iteracion de `buildSlots` arrancaba
+   * directamente en manana (en terminos ART) y nunca volvia a generar nada para el
+   * "2026-10-05" que ART todavia estaba viviendo. Con `todayInTimeZone(timezone)` el piso queda
+   * anclado al dia de calendario QUE EL COMPLEJO esta viviendo en ese instante, sin importar que
+   * tan lejos ya este el reloj UTC del servidor.
+   */
+  private horizonRange(timezone: string): { today: Date; horizonEnd: Date } {
+    const todayStr = todayInTimeZone(timezone);
+    return {
+      today: zonedTimeToUtc(todayStr, '00:00', timezone),
+      horizonEnd: zonedTimeToUtc(addDaysToDateStr(todayStr, HORIZON_DAYS), '00:00', timezone),
+    };
   }
 
   /**
