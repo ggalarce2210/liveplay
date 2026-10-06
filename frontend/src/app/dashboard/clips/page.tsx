@@ -12,12 +12,32 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
 
+/** Nombre de archivo para la descarga: el tÃ­tulo del clip, pasado a algo seguro para un
+ *  filesystem (sin tildes raras ni barras) y siempre terminado en .mp4. */
+function clipFileName(title: string): string {
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${slug || 'clip'}.mp4`;
+}
+
 export default function ClipsPage() {
   const [clips, setClips] = useState<Clip[] | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
   const [playError, setPlayError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // MenÃº "Compartir" (pedido explÃ­cito del usuario 2026-10-06): un Ã­cono al lado de "Ver
+  // partido" que al tocarlo despliega dos opciones, enviar link o descargar el video, en vez de
+  // tener dos botones sueltos ocupando lugar en cada tarjeta.
+  const [shareMenuId, setShareMenuId] = useState<string | null>(null);
+  const [shareBusyId, setShareBusyId] = useState<string | null>(null);
+  const [shareFeedback, setShareFeedback] = useState<{ id: string; message: string } | null>(null);
 
   async function load() {
     const data = await api.get<Clip[]>('/clips');
@@ -63,7 +83,7 @@ export default function ClipsPage() {
   }
 
   async function onDelete(clip: Clip) {
-    if (!window.confirm(`¿Eliminar el clip "${clip.title}"?`)) return;
+    if (!window.confirm(`Â¿Eliminar el clip "${clip.title}"?`)) return;
     setBusyId(clip.id);
     try {
       await api.delete(`/clips/${clip.id}`);
@@ -75,15 +95,68 @@ export default function ClipsPage() {
     }
   }
 
+  function flashFeedback(id: string, message: string) {
+    setShareFeedback({ id, message });
+    setTimeout(() => setShareFeedback((prev) => (prev?.id === id ? null : prev)), 3000);
+  }
+
+  /** Crea un enlace privado para el clip (mismo endpoint /share-links que "Compartir partido",
+   *  pero con clipId en vez de matchId) y lo manda por el share sheet nativo si existe
+   *  (navigator.share, lo normal en el celular), o lo copia al portapapeles si no. */
+  async function onSendLink(clip: Clip) {
+    setShareMenuId(null);
+    setShareBusyId(clip.id);
+    try {
+      const res = await api.post<{ url: string }>('/share-links', { clipId: clip.id, visibility: 'PRIVATE', expiresInHours: 48 });
+      const fullUrl = `${window.location.origin}${res.url}`;
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: clip.title, url: fullUrl });
+          return;
+        } catch {
+          // Si el usuario cancela el share sheet no es un error - simplemente no hacemos nada mas.
+          return;
+        }
+      }
+      await navigator.clipboard.writeText(fullUrl);
+      flashFeedback(clip.id, 'Enlace copiado â');
+    } catch (err) {
+      flashFeedback(clip.id, errorMessage(err, 'No pudimos generar el enlace'));
+    } finally {
+      setShareBusyId(null);
+    }
+  }
+
+  /** Descarga el archivo del clip. Reusa el mismo endpoint de playback que "Ver clip" (URL
+   *  firmada, valida 30 min) y fuerza la descarga con un <a download> en vez de abrir el video. */
+  async function onDownload(clip: Clip) {
+    setShareMenuId(null);
+    setShareBusyId(clip.id);
+    try {
+      const res = await api.get<{ status: string; url: string | null }>(`/clips/${clip.id}/playback`);
+      if (!res.url) throw new Error('El clip todavia no tiene un archivo para descargar.');
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = clipFileName(clip.title);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      flashFeedback(clip.id, errorMessage(err, 'No pudimos descargar este clip'));
+    } finally {
+      setShareBusyId(null);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <h1 className="text-2xl font-bold text-white">Mis mejores momentos</h1>
-      <p className="mb-6 text-sm text-ink-400">Clips que generaste a partir de tus partidos (§16).</p>
+      <p className="mb-6 text-sm text-ink-400">Clips que generaste a partir de tus partidos (Â§16).</p>
 
       {clips === null && <p className="text-ink-400">Cargando...</p>}
       {clips?.length === 0 && (
         <div className="card flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <span className="text-4xl">⭐</span>
+          <span className="text-4xl">â­</span>
           <p className="font-medium text-white">Todavia no creaste ningun clip</p>
           <p className="text-sm text-ink-400">Abri un partido, marca el inicio y el fin de una jugada, y crea tu primer clip.</p>
         </div>
@@ -103,15 +176,16 @@ export default function ClipsPage() {
             </div>
             {clip.match ? (
               <p className="text-sm text-ink-400">
-                {formatDate(clip.match.date)} · {formatTime(clip.match.startTime)} · {clip.match.court?.name}
+                {formatDate(clip.match.date)} Â· {formatTime(clip.match.startTime)} Â· {clip.match.court?.name}
               </p>
             ) : (
-              <p className="text-sm text-ink-500">Partido original vencido (se guarda igual, no tiene límite de tiempo)</p>
+              <p className="text-sm text-ink-500">Partido original vencido (se guarda igual, no tiene lÃ­mite de tiempo)</p>
             )}
             <p className="mt-1 text-xs text-ink-500">
-              {clip.startSeconds.toFixed(0)}s → {clip.endSeconds.toFixed(0)}s ({(clip.endSeconds - clip.startSeconds).toFixed(0)}s)
+              {clip.startSeconds.toFixed(0)}s â {clip.endSeconds.toFixed(0)}s ({(clip.endSeconds - clip.startSeconds).toFixed(0)}s)
             </p>
             {clip.status === 'FAILED' && clip.errorMessage && <p className="mt-1 text-xs text-red-400">{clip.errorMessage}</p>}
+            {shareFeedback?.id === clip.id && <p className="mt-1 text-xs text-pitch-400">{shareFeedback.message}</p>}
 
             {playingId === clip.id && (
               <div className="mt-3">
@@ -123,12 +197,12 @@ export default function ClipsPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               {clip.status === 'READY' && (
                 <button onClick={() => onWatch(clip)} className="btn-primary !py-2 text-sm">
-                  ▶ Ver clip
+                  â¶ Ver clip
                 </button>
               )}
               {clip.status === 'FAILED' && (
                 <button onClick={() => onRetry(clip)} disabled={busyId === clip.id} className="btn-secondary !py-2 text-sm">
-                  {busyId === clip.id ? 'Reintentando...' : '↻ Reintentar'}
+                  {busyId === clip.id ? 'Reintentando...' : 'â» Reintentar'}
                 </button>
               )}
               {clip.matchId && (
@@ -136,12 +210,40 @@ export default function ClipsPage() {
                   Ver partido
                 </Link>
               )}
+              {clip.status === 'READY' && (
+                <div className="relative">
+                  <button
+                    onClick={() => setShareMenuId((prev) => (prev === clip.id ? null : clip.id))}
+                    disabled={shareBusyId === clip.id}
+                    className="btn-secondary !py-2 text-sm disabled:opacity-60"
+                    aria-label="Compartir clip"
+                  >
+                    {shareBusyId === clip.id ? '...' : 'ð¤'}
+                  </button>
+                  {shareMenuId === clip.id && (
+                    <div className="absolute bottom-full left-0 z-10 mb-2 w-44 overflow-hidden rounded-lg border border-ink-700 bg-ink-800 shadow-lg">
+                      <button
+                        onClick={() => onSendLink(clip)}
+                        className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-ink-700"
+                      >
+                        ð Enviar link
+                      </button>
+                      <button
+                        onClick={() => onDownload(clip)}
+                        className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-ink-700"
+                      >
+                        â¬ Descargar video
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <button
                 onClick={() => onDelete(clip)}
                 disabled={busyId === clip.id}
                 className="ml-auto text-xs font-semibold text-red-400 hover:text-red-300 disabled:opacity-60"
               >
-                🗑
+                ð
               </button>
             </div>
           </div>
