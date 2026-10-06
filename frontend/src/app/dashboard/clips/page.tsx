@@ -12,7 +12,7 @@ function errorMessage(err: unknown, fallback: string): string {
   return err instanceof ApiError ? err.message : fallback;
 }
 
-/** Nombre de archivo para la descarga: el tÃ­tulo del clip, pasado a algo seguro para un
+/** Nombre de archivo para la descarga: el título del clip, pasado a algo seguro para un
  *  filesystem (sin tildes raras ni barras) y siempre terminado en .mp4. */
 function clipFileName(title: string): string {
   const slug = title
@@ -32,7 +32,7 @@ export default function ClipsPage() {
   const [playError, setPlayError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // MenÃº "Compartir" (pedido explÃ­cito del usuario 2026-10-06): un Ã­cono al lado de "Ver
+  // Menú "Compartir" (pedido explícito del usuario 2026-10-06): un ícono al lado de "Ver
   // partido" que al tocarlo despliega dos opciones, enviar link o descargar el video, en vez de
   // tener dos botones sueltos ocupando lugar en cada tarjeta.
   const [shareMenuId, setShareMenuId] = useState<string | null>(null);
@@ -83,7 +83,7 @@ export default function ClipsPage() {
   }
 
   async function onDelete(clip: Clip) {
-    if (!window.confirm(`Â¿Eliminar el clip "${clip.title}"?`)) return;
+    if (!window.confirm(`¿Eliminar el clip "${clip.title}"?`)) return;
     setBusyId(clip.id);
     try {
       await api.delete(`/clips/${clip.id}`);
@@ -119,7 +119,7 @@ export default function ClipsPage() {
         }
       }
       await navigator.clipboard.writeText(fullUrl);
-      flashFeedback(clip.id, 'Enlace copiado â');
+      flashFeedback(clip.id, 'Enlace copiado ✓');
     } catch (err) {
       flashFeedback(clip.id, errorMessage(err, 'No pudimos generar el enlace'));
     } finally {
@@ -151,12 +151,12 @@ export default function ClipsPage() {
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
       <h1 className="text-2xl font-bold text-white">Mis mejores momentos</h1>
-      <p className="mb-6 text-sm text-ink-400">Clips que generaste a partir de tus partidos (Â§16).</p>
+      <p className="mb-6 text-sm text-ink-400">Clips que generaste a partir de tus partidos (§16).</p>
 
       {clips === null && <p className="text-ink-400">Cargando...</p>}
       {clips?.length === 0 && (
         <div className="card flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <span className="text-4xl">â­</span>
+          <span className="text-4xl">⭐</span>
           <p className="font-medium text-white">Todavia no creaste ningun clip</p>
           <p className="text-sm text-ink-400">Abri un partido, marca el inicio y el fin de una jugada, y crea tu primer clip.</p>
         </div>
@@ -176,13 +176,13 @@ export default function ClipsPage() {
             </div>
             {clip.match ? (
               <p className="text-sm text-ink-400">
-                {formatDate(clip.match.date)} Â· {formatTime(clip.match.startTime)} Â· {clip.match.court?.name}
+                {formatDate(clip.match.date)} · {formatTime(clip.match.startTime)} · {clip.match.court?.name}
               </p>
             ) : (
-              <p className="text-sm text-ink-500">Partido original vencido (se guarda igual, no tiene lÃ­mite de tiempo)</p>
+              <p className="text-sm text-ink-500">Partido original vencido (se guarda igual, no tiene límite de tiempo)</p>
             )}
             <p className="mt-1 text-xs text-ink-500">
-              {clip.startSeconds.toFixed(0)}s â {clip.endSeconds.toFixed(0)}s ({(clip.endSeconds - clip.startSeconds).toFixed(0)}s)
+              {clip.startSeconds.toFixed(0)}s → {clip.endSeconds.toFixed(0)}s ({(clip.endSeconds - clip.startSeconds).toFixed(0)}s)
             </p>
             {clip.status === 'FAILED' && clip.errorMessage && <p className="mt-1 text-xs text-red-400">{clip.errorMessage}</p>}
             {shareFeedback?.id === clip.id && <p className="mt-1 text-xs text-pitch-400">{shareFeedback.message}</p>}
@@ -197,12 +197,12 @@ export default function ClipsPage() {
             <div className="mt-3 flex flex-wrap gap-2">
               {clip.status === 'READY' && (
                 <button onClick={() => onWatch(clip)} className="btn-primary !py-2 text-sm">
-                  â¶ Ver clip
+                  ▶ Ver clip
                 </button>
               )}
               {clip.status === 'FAILED' && (
                 <button onClick={() => onRetry(clip)} disabled={busyId === clip.id} className="btn-secondary !py-2 text-sm">
-                  {busyId === clip.id ? 'Reintentando...' : 'â» Reintentar'}
+                  {busyId === clip.id ? 'Reintentando...' : '↻ Reintentar'}
                 </button>
               )}
               {clip.matchId && (
@@ -218,7 +218,7 @@ export default function ClipsPage() {
                     className="btn-secondary !py-2 text-sm disabled:opacity-60"
                     aria-label="Compartir clip"
                   >
-                    {shareBusyId === clip.id ? '...' : 'ð¤'}
+                    {shareBusyId === clip.id ? '...' : '📤'}
                   </button>
                   {shareMenuId === clip.id && (
                     <div className="absolute bottom-full left-0 z-10 mb-2 w-44 overflow-hidden rounded-lg border border-ink-700 bg-ink-800 shadow-lg">
@@ -226,13 +226,13 @@ export default function ClipsPage() {
                         onClick={() => onSendLink(clip)}
                         className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-ink-700"
                       >
-                        ð Enviar link
+                        🔗 Enviar link
                       </button>
                       <button
                         onClick={() => onDownload(clip)}
                         className="block w-full px-3 py-2 text-left text-sm text-white hover:bg-ink-700"
                       >
-                        â¬ Descargar video
+                        ⬇ Descargar video
                       </button>
                     </div>
                   )}
@@ -243,7 +243,7 @@ export default function ClipsPage() {
                 disabled={busyId === clip.id}
                 className="ml-auto text-xs font-semibold text-red-400 hover:text-red-300 disabled:opacity-60"
               >
-                ð
+                🗑
               </button>
             </div>
           </div>
