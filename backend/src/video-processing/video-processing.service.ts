@@ -41,12 +41,36 @@ export class VideoProcessingService {
    * intentos y backoff exponencial le damos margen a que la instancia se recupere entre uno y
    * otro antes de rendirse definitivamente (y ahi es cuando entra el listener de 'failed').
    */
-  async enqueueProcessMatchVideo(videoId: string, sourceFilePath: string) {
+  async enqueueProcessMatchVideo(videoId: string, sourceStorageKey: string) {
     await this.queue.add(
       'process-match-video',
-      { type: 'process-match-video', videoId, sourceFilePath },
+      { type: 'process-match-video', videoId, sourceStorageKey },
       { attempts: 3, backoff: { type: 'exponential', delay: 15_000 } },
     );
+  }
+
+  /**
+   * Sube el archivo recién recibido (ruta local EFÍMERA de Multer, ej. /tmp/ecp-uploads/<hash>)
+   * a storage PERSISTENTE (R2/S3) antes de encolar el job — incidente 2026-10-08: antes,
+   * `attachVideo` pasaba esa ruta local directo al job de BullMQ, que persiste durmiendo en Redis
+   * hasta que el worker lo ejecuta; si el contenedor se reciclaba en el medio (deploy, OOM, o
+   * simplemente el spin-down por inactividad del free tier de Render) ese archivo temporal ya no
+   * existía en ningún lado y el job fallaba con ENOENT tras agotar sus 3 reintentos, perdiendo el
+   * video original sin posibilidad de recuperarlo. Subiéndolo primero a storage persistente, el
+   * worker puede descargarlo de ahí (ver `processMatchVideo`) sin importar cuántos reinicios
+   * pasaron en el medio — R2/S3 sobrevive a cualquier reciclado del contenedor.
+   */
+  async ingestSourceFile(videoId: string, localUploadPath: string): Promise<string> {
+    const ext = path.extname(localUploadPath) || '.mp4';
+    const sourceStorageKey = `incoming/${videoId}/source${ext}`;
+    await this.storage.putObject({ key: sourceStorageKey, filePath: localUploadPath, contentType: 'video/mp4' });
+    try {
+      await fs.rm(localUploadPath, { force: true });
+    } catch (err) {
+      this.logger.warn(`No se pudo borrar el archivo temporal de subida ${localUploadPath}: ${(err as Error).message}`);
+    }
+    await this.enqueueProcessMatchVideo(videoId, sourceStorageKey);
+    return sourceStorageKey;
   }
 
   async enqueueGenerateClip(clipId: string) {
@@ -57,16 +81,72 @@ export class VideoProcessingService {
     );
   }
 
+  // Usado por el script de seed/demo: corre el pipeline directo sobre un archivo local de
+  // ejemplo, sin pasar por storage persistente ni por la cola — no aplica el riesgo de reciclado
+  // de contenedor que motiva `ingestSourceFile`/`processMatchVideo` (no hay espera entre la
+  // "subida" y el procesamiento).
   async runProcessMatchVideoNow(videoId: string, sourceFilePath: string) {
-    return this.processMatchVideo({ type: 'process-match-video', videoId, sourceFilePath });
+    return this.runMatchVideoPipeline(videoId, sourceFilePath);
   }
 
   async runGenerateClipNow(clipId: string) {
     return this.generateClip({ type: 'generate-clip', clipId });
   }
 
+  /**
+   * Punto de entrada del worker para un job 'process-match-video' (§27/§28). `job.data` ya NO
+   * trae una ruta local: trae la key en storage persistente donde `ingestSourceFile` subió el
+   * original (ver comentario ahí y en video-processing.queue.ts). Acá se resuelve esa key a un
+   * archivo local -y recién ahí se corre el pipeline de FFmpeg, que necesita un path de disco-,
+   * usando el atajo de `getLocalPathForRead` si el driver es local (demo) o descargando con
+   * streaming (`downloadToFile`, nunca bufferizando el video entero en memoria) si es S3/R2.
+   */
   async processMatchVideo(job: Extract<VideoProcessingJobData, { type: 'process-match-video' }>) {
-    const { videoId, sourceFilePath } = job;
+    const { videoId, sourceStorageKey } = job;
+    const localPathFromDriver = this.storage.getLocalPathForRead?.(sourceStorageKey);
+    if (localPathFromDriver) {
+      await this.runMatchVideoPipeline(videoId, localPathFromDriver);
+    } else {
+      const downloadDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ecp-source-'));
+      const downloadedPath = path.join(downloadDir, `source${path.extname(sourceStorageKey) || '.mp4'}`);
+      try {
+        await this.storage.downloadToFile(sourceStorageKey, downloadedPath);
+        await this.runMatchVideoPipeline(videoId, downloadedPath);
+      } finally {
+        await fs.rm(downloadDir, { recursive: true, force: true });
+      }
+    }
+    // El original ya está procesado y persistido como HLS/thumbs: el crudo no hace más falta.
+    // Si `runMatchVideoPipeline` arriba lanzó una excepción, no llegamos a esta línea — el
+    // original persistido queda intacto para que BullMQ pueda reintentar el job (ver
+    // `cleanupAbandonedSource`, que lo borra solo cuando se agotan los reintentos definitivamente).
+    await this.storage.deleteObject(sourceStorageKey).catch((err) => {
+      this.logger.warn(`No se pudo borrar el original persistido ${sourceStorageKey}: ${(err as Error).message}`);
+    });
+  }
+
+  /**
+   * Best-effort: llamado desde el listener 'failed' del processor cuando un job de
+   * process-match-video agotó sus 3 reintentos definitivamente — el original persistido en
+   * storage ya no se va a usar nunca más, así que se limpia para no dejarlo acumulándose en el
+   * bucket. Si falla, solo se loguea (no es crítico: el video de todos modos ya quedó FAILED).
+   */
+  async cleanupAbandonedSource(sourceStorageKey: string): Promise<void> {
+    try {
+      await this.storage.deleteObject(sourceStorageKey);
+    } catch (err) {
+      this.logger.warn(`No se pudo limpiar el original abandonado ${sourceStorageKey}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Pipeline real de FFmpeg (probe -> HLS -> thumbnails -> poster -> subida a storage -> DB).
+   * Recibe siempre una ruta LOCAL de disco ya resuelta — no sabe ni le importa si esa ruta viene
+   * del driver local (demo), de una descarga desde S3/R2 (producción, ver `processMatchVideo`), o
+   * de un archivo de ejemplo del seed (ver `runProcessMatchVideoNow`). Lógica sin cambios respecto
+   * a la versión anterior a la corrección del 2026-10-08 — solo se extrajo a un método separado.
+   */
+  private async runMatchVideoPipeline(videoId: string, sourceFilePath: string) {
     const video = await this.db.query.videos.findFirst({ where: eq(videos.id, videoId) });
     if (!video) throw new Error(`Video ${videoId} no encontrado`);
     await this.db.update(videos).set({ status: 'PROCESSING' }).where(eq(videos.id, videoId));
