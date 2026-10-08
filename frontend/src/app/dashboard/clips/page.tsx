@@ -218,7 +218,27 @@ export default function ClipsPage() {
                     className="btn-secondary !py-2 text-sm disabled:opacity-60"
                     aria-label="Compartir clip"
                   >
-                    {shareBusyId === clip.id ? '...' : '📤'}
+                    {shareBusyId === clip.id ? (
+                      '...'
+                    ) : (
+                      <>
+                        {/* Icono propio (clásico ícono "compartir" de Android, 3 puntos conectados) en el
+                            verde "pitch" de la marca, en vez del emoji 📤 original — pedido del usuario
+                            2026-10-07, eligió esta variante entre 5 opciones probadas. */}
+                        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
+                          <circle cx="18" cy="5" r="2.6" fill="#2f9a52" />
+                          <circle cx="6" cy="12" r="2.6" fill="#2f9a52" />
+                          <circle cx="18" cy="19" r="2.6" fill="#2f9a52" />
+                          <path
+                            d="M8.3 10.6 15.7 6.4M8.3 13.4l7.4 4.2"
+                            stroke="#2f9a52"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        Compartir
+                      </>
+                    )}
                   </button>
                   {shareMenuId === clip.id && (
                     <div className="absolute bottom-full left-0 z-10 mb-2 w-44 overflow-hidden rounded-lg border border-ink-700 bg-ink-800 shadow-lg">
