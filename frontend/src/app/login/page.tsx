@@ -58,8 +58,13 @@ export default function LoginPage() {
 
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <Link href="/" className="inline-flex items-center gap-2 text-lg font-bold tracking-tight text-white">
-            <LogoMark className="h-8 w-8" />
+          <Link href="/" className="inline-flex flex-col items-center gap-3 text-lg font-bold tracking-tight text-white">
+            {/* Logo mas grande que en el resto del sitio + destello periodico (pedido del usuario
+                2026-10-08) - el brillo lo hace un ::after con gradiente diagonal animado (ver
+                ".logo-shine" en globals.css), asi no hace falta tocar el SVG de LogoMark. */}
+            <span className="logo-shine relative inline-block overflow-hidden rounded-[22%] shadow-glow">
+              <LogoMark className="h-28 w-28" />
+            </span>
             <span>Live<span className="text-pitch-400">Play</span></span>
           </Link>
           <p className="mt-2 text-sm text-ink-300">Iniciá sesión para ver tus partidos</p>
