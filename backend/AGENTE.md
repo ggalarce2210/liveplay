@@ -161,6 +161,9 @@ cámara Dahua igual guarda su propia grabación en la SD/NVR como último recurs
 - `uploader.py`, SIN NINGÚN CAMBIO — sigue preguntando al backend qué partidos faltan y
   subiendo el recorte, exactamente igual que siempre, solo que ahora lee los segmentos de
   acá en vez de del TV box.
+- `ingest-watchdog.sh` + su timer systemd (`liveplay-ingest-watchdog.timer`) — chequeo de
+  salud independiente, agregado el 2026-10-08 (ver la sección "Vigia del servidor puente" más
+  abajo). No reemplaza nada, es una red de seguridad adicional.
 
 ### Instalación
 
@@ -179,13 +182,16 @@ nano config.env   # completar LIVEPLAY_API_BASE, AGENT_KEY (del paso 1), RTMP_LI
                    # RTMP_APP_PATH, y dejar RECORDINGS_DIR/TMP_DIR/LOG_DIR por default
 chmod +x *.sh uploader.py
 sudo ufw allow 1935/tcp   # si usás ufw: abrir el puerto RTMP
-sudo cp systemd/liveplay-ingest-listen.service systemd/liveplay-agent-uploader.service /etc/systemd/system/
+sudo cp systemd/liveplay-ingest-listen.service systemd/liveplay-agent-uploader.service systemd/liveplay-ingest-watchdog.service systemd/liveplay-ingest-watchdog.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now liveplay-ingest-listen.service liveplay-agent-uploader.service
+sudo systemctl enable --now liveplay-ingest-listen.service liveplay-agent-uploader.service liveplay-ingest-watchdog.timer
 ```
 (Ajustar `User`/`WorkingDirectory` en los `.service` si no se llama `liveplay` el usuario del
-VPS.) Confirmar que arrancó bien: `sudo systemctl status liveplay-ingest-listen.service` y
-`journalctl -u liveplay-ingest-listen.service -f`.
+VPS — `liveplay-ingest-watchdog.service` es la excepción, ese va con `User=root` siempre, ver
+el comentario en el archivo.) Confirmar que arrancó bien: `sudo systemctl status
+liveplay-ingest-listen.service` y `journalctl -u liveplay-ingest-listen.service -f`. El
+`.timer` del vigia NO hace falta confirmarlo enseguida (recién actúa si algo se cuelga), pero
+se puede chequear que quedó programado con `systemctl list-timers | grep ingest-watchdog`.
 
 **3. En el dispositivo de la cancha** (el TV box ya instalado, reemplazando el modo normal):
 ```bash
@@ -210,6 +216,31 @@ apuntando a `push.sh` en vez de `record.sh`+`uploader.py`+`watchdog.sh`).
   propio `RTMP_LISTEN_PORT` (o su propio `RTMP_APP_PATH` con un servidor RTMP real en vez de
   este `ffmpeg -listen 1` minimalista, si en algún momento hace falta escalar a muchas
   cámaras en un mismo servidor).
+
+### Vigia del servidor puente (`ingest-watchdog.sh`), agregado 2026-10-08
+
+**Incidente real que motivó esto**: el 2026-10-08 a las 11:07 UTC, en "Los Pinos", la conexión
+RTMP entrante se cortó con un error de E/S a mitad de un segmento. El `ffmpeg -listen 1` de
+esa conexión no pudo cerrar prolijo el archivo y se quedó colgado en vez de terminar — y como
+`ingest-listen.sh` solo vuelve a escuchar cuando ese `ffmpeg` termina (`while true; do ffmpeg
+...; done`), el puente quedó sordo a cualquier conexión nueva durante **7 horas** (hasta que
+se reinició el servicio a mano). Lo insidioso: `systemctl status` decía `active (running)`
+todo ese tiempo, sin parar — el proceso seguía vivo, solo que colgado — así que nada avisó
+que estaba roto hasta que un partido real no apareció y se diagnosticó por SSH.
+
+**Fix**: `ingest-watchdog.sh` + `liveplay-ingest-watchdog.timer` (corre cada 2 minutos, ver
+instalación más arriba). El vigia no confía en el estado de systemd (justamente ese fue el
+engaño) — chequea desde afuera, con dos señales independientes, si el puente sirve para algo
+ahora mismo: (1) el puerto `RTMP_LISTEN_PORT` está en estado `LISTEN` (`ss -tlnp`), o (2) hay
+un segmento `.mp4` en `RECORDINGS_DIR` modificado en los últimos 90s (`INGEST_WATCHDOG_STALE_SECONDS`,
+configurable). Si ninguna de las dos es cierta, asume que el `ffmpeg` de adentro quedó
+colgado y corre `systemctl restart liveplay-ingest-listen.service` — el próximo intento de
+reconexión del TV box (que reintenta solo cada 5s, ver `push.sh`) encuentra el puente
+escuchando de nuevo sin que nadie tenga que notarlo ni intervenir a mano.
+
+No reemplaza ningún mecanismo existente: es un chequeo adicional, igual en espíritu a
+`watchdog.sh` del lado del TV box (ver la sección de arriba sobre ese), pero del lado del
+servidor y apuntado específicamente al modo de falla real que ya se vio una vez.
 
 ## Limitaciones conocidas de esta primera version
 
