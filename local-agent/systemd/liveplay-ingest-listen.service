@@ -1,0 +1,23 @@
+# Solo para el servidor "puente" del modo puente (ver ../ingest-listen.sh y ../push.sh).
+# Copiar a /etc/systemd/system/ y ajustar WorkingDirectory/User, luego:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now liveplay-ingest-listen.service liveplay-agent-uploader.service
+#
+# OJO: en este servidor NO se usa liveplay-agent-record.service (ese es para cuando el mismo
+# dispositivo tiene acceso RTSP directo a la cámara) — acá el que graba es ingest-listen.sh,
+# que recibe el push RTMP del TV box de la cancha en vez de leer RTSP.
+[Unit]
+Description=LivePlay modo puente - escucha push RTMP y graba segmentos
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=liveplay
+WorkingDirectory=/home/liveplay/liveplay-repo/local-agent
+ExecStart=/home/liveplay/liveplay-repo/local-agent/ingest-listen.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
