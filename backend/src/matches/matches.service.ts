@@ -130,7 +130,7 @@ export class MatchesService {
    */
   private withPosterUrl<T extends { video?: { posterKey?: string | null } | null }>(match: T): T {
     if (!match.video?.posterKey) return match;
-    return { ...match, video: { ...match.video, posterUrl: this.streamTokens.sign(match.video.posterKey, POSTER_URL_TTL_SECONDB� } };
+    return { ...match, video: { ...match.video, posterUrl: this.streamTokens.sign(match.video.posterKey, POSTER_URL_TTL_SECONDS) } };
   }
 
   async get(id: string, requester: AuthUser) {
