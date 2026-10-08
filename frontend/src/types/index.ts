@@ -113,6 +113,16 @@ export interface Video {
   id: string;
   status: VideoStatus;
   durationSeconds?: number | null;
+  /**
+   * Incidente 2026-10-08: en "modo puente" (ver backend/AGENTE.md) un corte de wifi en la
+   * cancha a mitad de partido puede hacer que la grabación de origen llegue incompleta sin que
+   * FFmpeg tire ningún error (procesa fielmente el archivo corto que recibió). `true` cuando
+   * `VideoProcessingService.runMatchVideoPipeline` detectó que la duración real quedó muy por
+   * debajo de la esperada para el turno — el video queda `READY` igual, pero esto lo marca
+   * para revisión manual en vez de pasar desapercibido.
+   */
+  durationWarning?: boolean | null;
+  sizeBytes?: number | null;
   width?: number | null;
   height?: number | null;
   segments?: VideoSegment[];
