@@ -83,9 +83,14 @@ export default function AdminDashboardPage() {
                 <h1 className="text-2xl font-bold text-white">Panel de administracion</h1>
                 <p className="text-sm text-ink-400">Estadisticas generales, camaras y almacenamiento.</p>
               </div>
-              <a href="/admin/canchas" className="btn-secondary">
-                🎥 Canchas y camaras
-              </a>
+              <div className="flex flex-wrap gap-2">
+                <a href="/admin/videos" className="btn-secondary">
+                  🎬 Videos por cámara
+                </a>
+                <a href="/admin/canchas" className="btn-secondary">
+                  🎥 Canchas y camaras
+                </a>
+              </div>
             </div>
 
             <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
