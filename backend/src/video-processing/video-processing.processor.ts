@@ -118,6 +118,10 @@ export class VideoProcessingProcessor extends WorkerHost implements OnApplicatio
           await db.update(videos).set({ status: 'FAILED', errorMessage: String(err?.message ?? err), updatedAt: new Date() }).where(eq(videos.id, job.data.videoId));
           await db.update(matches).set({ status: 'FAILED', updatedAt: new Date() }).where(eq(matches.id, video.matchId));
         }
+        // Se agotaron los 3 reintentos definitivamente: el original persistido en storage
+        // (ver `ingestSourceFile`) ya no se va a volver a usar — lo limpiamos para no dejarlo
+        // acumulándose en el bucket (incidente 2026-10-08).
+        await this.videoProcessingService.cleanupAbandonedSource(job.data.sourceStorageKey);
       }
     } catch (updateErr) {
       this.logger.error(`No se pudo marcar el job ${job.id} como fallido en la base`, updateErr as Error);
