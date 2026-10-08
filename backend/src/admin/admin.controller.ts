@@ -21,6 +21,12 @@ export class AdminController {
     return this.service.getStorage();
   }
 
+  /** Listado completo de videos agrupables por complejo/cancha/cámara — ver AdminService.getAllVideos. */
+  @Get('videos')
+  videos(@Query('complexId') complexId?: string) {
+    return this.service.getAllVideos(complexId);
+  }
+
   @UseGuards()
   @Roles(Role.SUPER_ADMIN)
   @Get('audit-logs')
