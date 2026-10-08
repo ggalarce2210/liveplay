@@ -20,6 +20,13 @@ export interface StorageDriver {
   getObjectAsBuffer(key: string): Promise<Buffer>;
   getObjectStream(key: string): NodeJS.ReadableStream;
   getLocalPathForRead?(key: string): string | null; // optimización: streaming directo si el driver es local
+  /**
+   * Descarga un objeto a un archivo en disco usando streaming (nunca carga todo el objeto en
+   * memoria, a diferencia de `getObjectAsBuffer`) — necesario para el video original de un
+   * partido (cientos de MB a varios GB), donde bufferizar entero puede tirar abajo una instancia
+   * con poca memoria (ver incidente 2026-10-08: pipeline de ingesta de video original).
+   */
+  downloadToFile(key: string, destPath: string): Promise<void>;
   deleteObject(key: string): Promise<void>;
   deletePrefix(prefix: string): Promise<void>;
   exists(key: string): Promise<boolean>;
