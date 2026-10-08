@@ -147,7 +147,7 @@ export class VideoProcessingService {
    * a la versión anterior a la corrección del 2026-10-08 — solo se extrajo a un método separado.
    */
   private async runMatchVideoPipeline(videoId: string, sourceFilePath: string) {
-    const video = await this.db.query.videos.findFirst({ where: eq(videos.id, videoId), with: { match: true } });
+    const video = await this.db.query.videos.findFirst({ where: eq(videos.id, videoId) });
     if (!video) throw new Error(`Video ${videoId} no encontrado`);
     await this.db.update(videos).set({ status: 'PROCESSING' }).where(eq(videos.id, videoId));
     await this.db.update(matches).set({ status: 'PROCESSING' }).where(eq(matches.id, video.matchId));
@@ -155,31 +155,6 @@ export class VideoProcessingService {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ecp-video-'));
     try {
       const probeResult = await this.ffmpeg.probe(sourceFilePath);
-
-      // Detección de video incompleto (incidente 2026-10-08): si el partido tiene `endTime`
-      // cargado, comparamos la duración real del archivo fuente contra la duración esperada del
-      // turno (`endTime - startTime`). Un video sensiblemente más corto que lo esperado casi
-      // siempre significa que la grabación de origen ya llegó incompleta - típicamente un corte
-      // de wifi en la cancha a mitad de partido en "modo puente" (ver backend/AGENTE.md, sección
-      // "Modo puente": ese modo no tiene colchón local, así que lo que no se llega a empujar se
-      // pierde para siempre) - y NO un bug de este pipeline: FFmpeg ya reporta fielmente la
-      // duración del archivo que recibió, por eso termina en 'READY' y no en 'FAILED'. Margen de
-      // 120s para no disparar falsos positivos por el desfasaje de hasta un par de segundos del
-      // corte a keyframe más cercano (ver "Limitaciones conocidas" en AGENTE.md). Si el partido no
-      // tiene `endTime` (hoy todavía lo más común), no hay forma confiable de saber la duración
-      // esperada desde acá - esa cuenta la hace hoy el agente local con `BUFFER_MINUTES` -, así
-      // que no marcamos nada en ese caso.
-      const expectedDurationSeconds = video.match?.endTime
-        ? (video.match.endTime.getTime() - video.match.startTime.getTime()) / 1000
-        : null;
-      const durationWarning = expectedDurationSeconds != null && probeResult.durationSeconds < expectedDurationSeconds - 120;
-      if (durationWarning) {
-        this.logger.warn(
-          `Video ${videoId}: duración procesada (${probeResult.durationSeconds.toFixed(1)}s) muy por debajo de la ` +
-            `esperada para el turno (${expectedDurationSeconds!.toFixed(1)}s) - probablemente la grabación de origen ` +
-            `llegó incompleta. Se marca duration_warning=true para revisión manual.`,
-        );
-      }
 
       const hlsDir = path.join(tmpDir, 'hls');
       const { manifestFile, segments } = await this.ffmpeg.generateHls(sourceFilePath, hlsDir);
@@ -243,7 +218,6 @@ export class VideoProcessingService {
             thumbnailSpriteKey: `${base}/thumbs/${spriteFile}`,
             thumbnailVttKey: `${base}/thumbs/${vttFile}`,
             durationSeconds: probeResult.durationSeconds,
-            durationWarning,
             width: probeResult.width,
             height: probeResult.height,
             fps: probeResult.fps,
