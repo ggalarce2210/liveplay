@@ -236,6 +236,15 @@ export const videos = pgTable('videos', {
   fps: doublePrecision('fps'),
   sizeBytes: doublePrecision('size_bytes'),
   errorMessage: text('error_message'),
+  /**
+   * Incidente 2026-10-08: en "modo puente" (ver backend/AGENTE.md) un corte de wifi en la cancha
+   * a mitad de partido puede hacer que la grabación de origen llegue incompleta sin que FFmpeg
+   * tire ningún error (procesa fielmente el archivo corto que recibió). `durationWarning` queda
+   * en `true` cuando `VideoProcessingService.runMatchVideoPipeline` detecta que la duración real
+   * quedó muy por debajo de la esperada para el turno (`matches.endTime - matches.startTime`),
+   * para poder distinguir ese caso de un video `READY` genuinamente completo.
+   */
+  durationWarning: boolean('duration_warning').notNull().default(false),
   ...timestamps,
 });
 
