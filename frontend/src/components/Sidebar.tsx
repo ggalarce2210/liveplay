@@ -16,6 +16,7 @@ const PLAYER_LINKS = [
 const ADMIN_LINKS = [
   { href: '/admin', label: 'Panel admin', icon: '📊' },
   { href: '/admin/canchas', label: 'Canchas y cámaras', icon: '🎥' },
+  { href: '/admin/videos', label: 'Videos por cámara', icon: '🎬' },
 ];
 
 export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
