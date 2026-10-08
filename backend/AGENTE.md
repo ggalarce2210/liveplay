@@ -132,6 +132,85 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now liveplay-agent-record.service liveplay-agent-uploader.service
 ```
 
+## Modo puente (streaming en vivo, sin grabar en el dispositivo de la cancha)
+
+Agregado el 2026-10-06 a raíz de un incidente real: el TV box de "Los Pinos" Cancha 1 tiene
+muy poco disco libre (~1.9GB). Con el modo normal (`record.sh` grabando localmente),
+cualquier pico de uso o corte de red hacía que la limpieza de emergencia por disco lleno
+borrara segmentos crudos antes de que `uploader.py` llegara a subirlos — se perdieron
+partidos enteros el 2026-10-05/06 (ver el resumen del proyecto).
+
+La idea: sacarle a ese dispositivo la responsabilidad de grabar. En vez de eso, solo reenvía
+("hace de puente") el video en vivo de la cámara a un servidor con disco de verdad (un VPS
+cualquiera), que es el que realmente graba. Si se corta internet en el medio, se pierde lo
+que no se llegó a empujar — a diferencia del modo normal, acá no hay colchón local — pero la
+cámara Dahua igual guarda su propia grabación en la SD/NVR como último recurso.
+
+### Qué corre dónde
+
+**En el dispositivo de la cancha** (el TV box, con acceso RTSP a la cámara):
+- `push.sh` en vez de `record.sh` — toma el RTSP de la cámara y lo empuja (`-c copy`, sin
+  recodificar) como RTMP al servidor puente. No escribe nada a disco.
+- Nada de `uploader.py` ni `watchdog.sh` acá — no hay segmentos locales que subir ni disco
+  que cuidar.
+
+**En el servidor puente** (un VPS con Linux, con una IP pública alcanzable desde la cancha):
+- `ingest-listen.sh` en vez de `record.sh` — escucha el push RTMP entrante y graba los
+  mismos segmentos UTC (`2026-10-06T13-00-00.mp4`, etc.) que `record.sh` grababa antes en el
+  dispositivo.
+- `uploader.py`, SIN NINGÚN CAMBIO — sigue preguntando al backend qué partidos faltan y
+  subiendo el recorte, exactamente igual que siempre, solo que ahora lee los segmentos de
+  acá en vez de del TV box.
+
+### Instalación
+
+**1. Generar credenciales nuevas para la cámara** (desde el panel de admin, o a mano:
+`POST /cameras/:id/enrollment-code` con sesión de SUPER_ADMIN/COMPLEX_ADMIN, y canjear el
+código con `POST /agent/enroll` — ver `enroll.sh`). Rota el token viejo, así que si el TV box
+todavía tiene el agente clásico corriendo, dejá de usarlo antes de este paso.
+
+**2. En el servidor puente** (ej. un droplet de DigitalOcean con Ubuntu):
+```bash
+sudo apt update && sudo apt install -y ffmpeg python3 git
+git clone <URL-del-repo> liveplay-repo
+cd liveplay-repo/local-agent
+cp config.example.env config.env
+nano config.env   # completar LIVEPLAY_API_BASE, AGENT_KEY (del paso 1), RTMP_LISTEN_PORT,
+                   # RTMP_APP_PATH, y dejar RECORDINGS_DIR/TMP_DIR/LOG_DIR por default
+chmod +x *.sh uploader.py
+sudo ufw allow 1935/tcp   # si usás ufw: abrir el puerto RTMP
+sudo cp systemd/liveplay-ingest-listen.service systemd/liveplay-agent-uploader.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now liveplay-ingest-listen.service liveplay-agent-uploader.service
+```
+(Ajustar `User`/`WorkingDirectory` en los `.service` si no se llama `liveplay` el usuario del
+VPS.) Confirmar que arrancó bien: `sudo systemctl status liveplay-ingest-listen.service` y
+`journalctl -u liveplay-ingest-listen.service -f`.
+
+**3. En el dispositivo de la cancha** (el TV box ya instalado, reemplazando el modo normal):
+```bash
+cd liveplay-repo/local-agent
+# detener lo viejo primero (record.sh/uploader.py/watchdog.sh si estaban corriendo)
+nano config.env   # completar/revisar RTSP_URL (igual que antes) e INGEST_RTMP_URL apuntando
+                   # a rtmp://IP-DEL-DROPLET:1935/live/NOMBRE-CANCHA (mismo RTMP_APP_PATH
+                   # que se configuró en el servidor puente)
+chmod +x push.sh
+bash push.sh   # probar a mano un rato, confirmar en el log del servidor puente que llega
+```
+Si funciona, dejarlo arrancando solo igual que antes (`termux-boot-start.sh` en Termux,
+apuntando a `push.sh` en vez de `record.sh`+`uploader.py`+`watchdog.sh`).
+
+### Limitaciones de este modo (además de las generales, más abajo)
+
+- Sin colchón local: un corte de internet en la cancha durante el partido pierde ese tramo
+  sin forma de recuperarlo desde el servidor (sí puede seguir estando en la grabación propia
+  de la cámara/NVR, fuera de LivePlay).
+- `ingest-listen.sh` solo acepta UNA conexión entrante a la vez por puerto — correcto para
+  una cámara por servidor puente; para varias canchas en el mismo VPS, cada una necesita su
+  propio `RTMP_LISTEN_PORT` (o su propio `RTMP_APP_PATH` con un servidor RTMP real en vez de
+  este `ffmpeg -listen 1` minimalista, si en algún momento hace falta escalar a muchas
+  cámaras en un mismo servidor).
+
 ## Limitaciones conocidas de esta primera version
 
 - El corte del video al horario exacto del partido usa `-c copy` (sin recodificar) en las
