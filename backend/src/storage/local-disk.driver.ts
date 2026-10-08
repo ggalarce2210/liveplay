@@ -46,6 +46,11 @@ export class LocalDiskStorageDriver implements StorageDriver {
     return this.resolve(key);
   }
 
+  async downloadToFile(key: string, destPath: string): Promise<void> {
+    await fsp.mkdir(path.dirname(destPath), { recursive: true });
+    await fsp.copyFile(this.resolve(key), destPath);
+  }
+
   async deleteObject(key: string): Promise<void> {
     await fsp.rm(this.resolve(key), { force: true });
   }
