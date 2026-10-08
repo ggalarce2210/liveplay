@@ -9,6 +9,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import * as fs from 'fs';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { StorageDriver, PutObjectInput } from './storage.types';
 
 /**
@@ -58,6 +59,13 @@ export class S3StorageDriver implements StorageDriver {
 
   getLocalPathForRead(): null {
     return null;
+  }
+
+  // Streaming directo a disco: a diferencia de `getObjectAsBuffer`, nunca mantiene el objeto
+  // completo en memoria — crítico para el video original de un partido, que puede pesar varios GB.
+  async downloadToFile(key: string, destPath: string): Promise<void> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    await pipeline(res.Body as Readable, fs.createWriteStream(destPath));
   }
 
   async deleteObject(key: string): Promise<void> {
