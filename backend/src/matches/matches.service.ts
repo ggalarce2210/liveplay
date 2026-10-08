@@ -130,7 +130,7 @@ export class MatchesService {
    */
   private withPosterUrl<T extends { video?: { posterKey?: string | null } | null }>(match: T): T {
     if (!match.video?.posterKey) return match;
-    return { ...match, video: { ...match.video, posterUrl: this.streamTokens.sign(match.video.posterKey, POSTER_URL_TTL_SECONDS) } };
+    return { ...match, video: { ...match.video, posterUrl: this.streamTokens.sign(match.video.posterKey, POSTER_URL_TTL_SECONDB� } };
   }
 
   async get(id: string, requester: AuthUser) {
@@ -190,6 +190,15 @@ export class MatchesService {
   /**
    * Asocia un video subido (o llegado desde el NVR) a un partido y dispara el pipeline de
    * procesamiento (FFmpeg -> HLS -> thumbnails) de forma asíncrona (§10, §28).
+   *
+   * `sourceFilePath` es la ruta local EFÍMERA donde Multer dejó el archivo subido
+   * (/tmp/ecp-uploads/<hash>, ver *.controller.ts). Incidente 2026-10-08: antes se pasaba esa
+   * ruta directo al job de BullMQ, que queda durmiendo en Redis hasta que el worker lo ejecuta —
+   * si el contenedor de Render se reciclaba en el medio (deploy, OOM, o el spin-down por
+   * inactividad del free tier), ese archivo temporal desaparecía y el video original se perdía
+   * para siempre. Ahora `ingestSourceFile` lo sube primero a storage persistente (R2/S3) y recién
+   * ahí encola el job con la key persistente — inmune a cuántos reinicios pasen antes de que el
+   * worker llegue a correrlo.
    */
   async attachVideo(matchId: string, sourceFilePath: string) {
     const match = await this.db.query.matches.findFirst({ where: eq(matches.id, matchId) });
@@ -203,7 +212,7 @@ export class MatchesService {
     } else {
       [video] = await this.db.insert(videos).values({ matchId, storageBaseKey, status: 'PENDING' }).returning();
     }
-    await this.videoProcessing.enqueueProcessMatchVideo(video.id, sourceFilePath);
+    await this.videoProcessing.ingestSourceFile(video.id, sourceFilePath);
     return video;
   }
 
