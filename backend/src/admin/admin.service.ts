@@ -83,6 +83,31 @@ export class AdminService {
     };
   }
 
+  /**
+   * Listado completo de videos para el panel (§"organizar por complejo/cámara", 2026-10-08):
+   * a diferencia de `MatchesService.search` (que solo devuelve partidos de los últimos 7 días,
+   * límite de PRODUCTO pensado para jugadores, ver comentario ahí) acá un admin necesita poder
+   * ver TODOS los videos que existen, sin importar la antigüedad, para poder ubicar a qué
+   * complejo/cancha/cámara pertenece cada uno — hoy con una sola cámara no hace falta, pero con
+   * decenas de complejos un listado plano se vuelve inmanejable. Devuelve partidos (no videos
+   * sueltos) con `court.camera`/`complex` embebidos para que el frontend arme el árbol
+   * complejo → cancha/cámara → partido sin pegarle a la API de nuevo por cada nivel; el
+   * agrupamiento en sí se hace del lado del cliente (mismo criterio que ya usa esta clase en
+   * `getStats`, que filtra por complexId en JS en vez de armar un WHERE con join).
+   */
+  async getAllVideos(complexId?: string) {
+    const allMatches = await this.db.query.matches.findMany({
+      where: complexId ? eq(matches.complexId, complexId) : undefined,
+      with: {
+        complex: true,
+        court: { with: { camera: true } },
+        video: true,
+      },
+      orderBy: [desc(matches.startTime)],
+    });
+    return allMatches.filter((m: any) => !!m.video);
+  }
+
   getAuditLogs(limit = 100) {
     return this.db.query.auditLogs.findMany({ limit, orderBy: [desc(auditLogs.createdAt)], with: { user: true } });
   }
