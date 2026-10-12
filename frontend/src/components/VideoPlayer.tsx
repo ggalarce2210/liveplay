@@ -221,8 +221,21 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
                 </div>
               )}
             </div>
+            {/* Antes acá había el caracter Unicode "⛶" (U+26F6) como ícono de pantalla
+                completa. En la fuente real de la app (Inter) ese caracter no tiene glifo
+                propio, así que el navegador lo reemplazaba por el de alguna fuente de
+                respaldo del sistema — en varios dispositivos termina pareciendo un ícono
+                sin relación (ej. unas rayitas), no algo reconocible como "expandir a
+                pantalla completa" (reporte real de un usuario: no veía ninguna opción de
+                pantalla completa). Fix: un SVG propio, inline, que se ve igual en cualquier
+                navegador/dispositivo sin depender de qué glifos tenga instalados. */}
             <button onClick={toggleFullscreen} className="text-white" title="Pantalla completa">
-              ⛶
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+                <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
+                <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+              </svg>
             </button>
           </div>
         </div>
@@ -248,7 +261,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
               <button onClick={() => setBookmarkDraft('')} className="btn-secondary !px-3 !py-1.5 text-xs">
                 ★ Marcar este momento
               </button>
-            ) : (
+          ) : (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
