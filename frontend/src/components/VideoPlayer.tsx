@@ -261,7 +261,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
               <button onClick={() => setBookmarkDraft('')} className="btn-secondary !px-3 !py-1.5 text-xs">
                 ★ Marcar este momento
               </button>
-          ) : (
+            ) : (
               <form
                 onSubmit={(e) => {
                   e.preventDefault();
