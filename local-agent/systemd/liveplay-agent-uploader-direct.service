@@ -1,0 +1,24 @@
+# "Escenario B" (ver backend/AGENTE.md): alternativa a liveplay-agent-uploader.service para
+# complejos donde el mini-PC corre FFmpeg localmente y sube directo a storage en vez de mandar
+# el video crudo al backend. Son MUTUAMENTE EXCLUYENTES — instalar SOLO uno de los dos
+# (nunca los dos subiendo el mismo partido a la vez). record.sh sigue siendo el mismo sea cual
+# sea el modo: solo cambia qué lee esos segmentos crudos y cómo los sube.
+#
+# Copiar a /etc/systemd/system/ y ajustar WorkingDirectory/User, luego:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now liveplay-agent-uploader-direct.service
+[Unit]
+Description=LivePlay agente local - subida directa a storage (Escenario B)
+After=network-online.target liveplay-agent-record.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/liveplay-repo/local-agent
+ExecStart=/usr/bin/python3 /home/pi/liveplay-repo/local-agent/uploader_direct.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
