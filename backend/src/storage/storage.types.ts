@@ -31,4 +31,13 @@ export interface StorageDriver {
   deletePrefix(prefix: string): Promise<void>;
   exists(key: string): Promise<boolean>;
   getSignedReadUrl(key: string, expiresInSeconds: number): Promise<string>;
+  /**
+   * URL firmada de corta duración para SUBIR un único objeto (PUT), en vez de descargarlo.
+   * Agregado para "Escenario B" (ver backend/AGENTE.md): el agente local (mini-PC) corre FFmpeg
+   * EN LA CANCHA y sube los archivos resultantes directo a storage, sin que pasen por este
+   * backend — acá solo se emite, por archivo, una URL de un solo uso con el Content-Type ya fijo
+   * (nunca una credencial de acceso al bucket entero: si se filtra una de estas URLs, solo sirve
+   * para subir esa key puntual y vence sola). Ver AgentService.createUploadPlan.
+   */
+  getSignedPutUrl(key: string, contentType: string, expiresInSeconds: number): Promise<string>;
 }

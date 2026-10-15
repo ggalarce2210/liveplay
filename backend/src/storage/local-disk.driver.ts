@@ -72,4 +72,18 @@ export class LocalDiskStorageDriver implements StorageDriver {
     const token = jwt.sign({ key }, this.signingSecret, { expiresIn: expiresInSeconds });
     return `${this.publicBaseUrl}/api/stream/${encodeURIComponent(token)}`;
   }
+
+  /**
+   * Este driver no tiene un bucket S3 real al que apuntar con una URL PUT firmada de verdad (es
+   * "disco local", ver cabecera del archivo) — así que en vez de eso firma un JWT de corta
+   * duración (mismo mecanismo y mismo secreto que getSignedReadUrl) marcado `put:true`, apuntando
+   * a AgentUploadController, que es la contraparte de StreamController pero para subir en vez de
+   * descargar. En producción con S3StorageDriver (R2) esto no se usa nunca — el device sube
+   * directo al bucket real. Esto existe para poder probar el flujo de "Escenario B" completo acá
+   * en la demo, sin depender de tener un bucket R2 configurado.
+   */
+  async getSignedPutUrl(key: string, contentType: string, expiresInSeconds: number): Promise<string> {
+    const token = jwt.sign({ key, contentType, put: true }, this.signingSecret, { expiresIn: expiresInSeconds });
+    return `${this.publicBaseUrl}/api/storage/agent-upload/${encodeURIComponent(token)}`;
+  }
 }

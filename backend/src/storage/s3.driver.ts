@@ -95,4 +95,12 @@ export class S3StorageDriver implements StorageDriver {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
+
+  // Mismo mecanismo que getSignedReadUrl pero con PutObjectCommand: el dispositivo que recibe
+  // esta URL puede subir EXACTAMENTE esa key (con ESE Content-Type, fijado en la firma) y nada
+  // más — no es una credencial de bucket, no sirve para listar ni para tocar otras keys.
+  async getSignedPutUrl(key: string, contentType: string, expiresInSeconds: number): Promise<string> {
+    const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType });
+    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
 }
