@@ -7,6 +7,7 @@ import { StreamTokenService } from '../storage/stream-token.service';
 import { SearchMatchesDto } from './dto/search-matches.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, formatInTimeZone, todayInTimeZone } from '../common/timezone';
+import { buildStorageBaseKey } from './storage-key.util';
 
 // Decisión del cliente (2026-09-24): los partidos grabados solo quedan disponibles para ver
 // durante 1 semana (los clips generados a partir de ellos NO tienen este límite — ver
@@ -203,7 +204,7 @@ export class MatchesService {
   async attachVideo(matchId: string, sourceFilePath: string) {
     const match = await this.db.query.matches.findFirst({ where: eq(matches.id, matchId) });
     if (!match) throw new NotFoundException('Partido no encontrado');
-    const storageBaseKey = this.buildStorageBaseKey(match);
+    const storageBaseKey = buildStorageBaseKey(match);
 
     const existing = await this.db.query.videos.findFirst({ where: eq(videos.matchId, matchId) });
     let video;
@@ -214,19 +215,5 @@ export class MatchesService {
     }
     await this.videoProcessing.ingestSourceFile(video.id, sourceFilePath);
     return video;
-  }
-
-  /** Layout lógico de storage: complejo/cancha/año/mes/día/hora (§10) — invisible para el frontend. */
-  private buildStorageBaseKey(match: { complexId: string; courtId: string; startTime: Date }): string {
-    const d = match.startTime;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return [
-      `complex-${match.complexId}`,
-      `court-${match.courtId}`,
-      d.getFullYear(),
-      pad(d.getMonth() + 1),
-      pad(d.getDate()),
-      `${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`,
-    ].join('/');
   }
 }
