@@ -242,6 +242,120 @@ No reemplaza ningún mecanismo existente: es un chequeo adicional, igual en esp�
 `watchdog.sh` del lado del TV box (ver la sección de arriba sobre ese), pero del lado del
 servidor y apuntado específicamente al modo de falla real que ya se vio una vez.
 
+## Escenario B: subida directa a storage (sin pasar por este backend)
+
+Agregado el 2026-10-15 para "Complejo Los Pinos": un mini-PC con Windows (no un TV box ni una
+Raspberry chica) con CPU y disco de sobra, donde conviene gastar ESA CPU local en vez de la
+del backend (instancia chica de Render) — y de paso evitar que el video crudo de cada partido
+tenga que viajar entero por la red de ingesta del backend antes de poder procesarse.
+
+**Qué cambia respecto al modo normal**: `record.sh` sigue exactamente igual (sigue grabando
+segmentos crudos sin tocar). Lo que cambia es el script que los convierte en el video final:
+en vez de `uploader.py` (sube el recorte crudo a `POST /agent/matches/:id/video`, y es EL
+BACKEND el que corre FFmpeg — HLS + thumbnails + poster), acá corre
+[`uploader_direct.py`](../local-agent/uploader_direct.py), que:
+
+1. Arma el mismo recorte exacto del partido que armaría `uploader.py` (mismo `build_clip`,
+   compartido entre los dos en `agent_lib.py` para que nunca diverjan).
+2. Corre FFmpeg LOCALMENTE para generar HLS + sprite de miniaturas + WebVTT + poster — réplica
+   exacta, flag por flag, de `generateHls`/`generateThumbnailSprite`/`generatePoster` en
+   `backend/src/video-processing/ffmpeg.service.ts` (con `-c:v copy` porque la cámara real de
+   Los Pinos graba H.264 — si algún día no fuera así, el script detecta el codec con `ffprobe`
+   y re-codifica solo, igual que el backend).
+3. Pide `POST /agent/matches/:id/upload-plan` (ver `AgentService.createUploadPlan`): el
+   backend deja el `video` en `PENDING` con su `storageBaseKey` de siempre, y devuelve una URL
+   PUT firmada de 1h por archivo — nunca una credencial del bucket completo.
+4. Sube cada archivo (manifest, ~segmentos .ts, sprite, vtt, poster) directo a esa URL.
+5. Llama `POST /agent/matches/:id/finalize` (ver `AgentService.finalizeDirectUpload`): el
+   backend verifica que lo esperable esté en storage (spot-check barato, no los ~600 segmentos
+   uno por uno) y recién ahí escribe `videoSegments` + `videos.status=READY` +
+   `matches.status=READY` + notificación `MATCH_READY` — mismo cierre que el pipeline legacy,
+   en una implementación separada a propósito (ver el comentario en `AgentService` para el
+   porqué de no reutilizar `VideoProcessingService`).
+
+El pipeline legacy (`VideoProcessingService.runMatchVideoPipeline`) sigue sin tocarse — los
+demás complejos siguen subiendo el video crudo y procesándolo en el backend, sin ningún cambio.
+
+**Por qué hace falta STATE_DIR**: a diferencia del modo normal, acá `upload-plan` YA le avisa
+al backend "este partido está en proceso" — a partir de ese momento el partido deja de
+aparecer en `/agent/matches/pending` (solo lista partidos SIN video o con video `FAILED`), así
+que si el script se cortara a mitad de camino sin guardar nada, ese partido quedaría colgado en
+`PROCESSING` para siempre, sin que nada lo reintente solo. Por eso `uploader_direct.py` guarda
+en `TMP_DIR/direct-uploads/<matchId>/` todo lo necesario para retomar exactamente donde quedó
+(los archivos de FFmpeg ya generados, el upload-plan con sus URLs, y qué archivos ya se
+subieron con éxito) — en cada vuelta, ANTES de preguntar por partidos nuevos, primero retoma
+cualquier partido que haya quedado a medio subir. Ver el comentario grande al principio de
+`uploader_direct.py` para el detalle completo (incluye cómo se renueva el upload-plan si pasó
+demasiado tiempo y las URLs firmadas ya vencieron).
+
+### Instalación en un mini-PC con Windows — WSL2 (recomendado)
+
+Windows no tiene bash/systemd nativo, así que hace falta algo que corra los scripts de
+`local-agent/` sin reescribirlos. Se eligió **WSL2 con systemd habilitado** en vez de portar
+todo a PowerShell nativo, por dos motivos concretos: (a) `record.sh`/`watchdog.sh` ya tienen
+varios bugs reales ya encontrados y arreglados (ver los comentarios largos en `watchdog.sh` —
+el caso de `pgrep` faltante, el de los ffmpeg huérfanos, etc.) que una reescritura desde cero
+en PowerShell arriesgaría reintroducir; (b) `uploader_direct.py` (como `uploader.py`) ya es
+Python puro + llamadas a `ffmpeg`/`curl`, 100% portable sin cambios bajo WSL.
+
+1. **Habilitar WSL2 y una distro** (PowerShell como administrador, una sola vez):
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+   Reiniciar si lo pide, y completar la creación de usuario de la distro cuando abra.
+
+2. **Habilitar systemd dentro de la distro** (sin esto no se puede usar `systemctl` adentro de
+   WSL): dentro de la distro Ubuntu,
+   ```bash
+   sudo tee -a /etc/wsl.conf <<'EOF'
+   [boot]
+   systemd=true
+   EOF
+   ```
+   y desde PowerShell: `wsl --shutdown` (cierra WSL del todo) y volver a abrir la distro para
+   que el cambio tome efecto.
+
+3. **Instalar dependencias e instalar el agente** — desde acá en adelante es EXACTAMENTE el
+   mismo paso a paso que ["Paso 2 (alternativo, para producción): Raspberry Pi / mini PC con
+   Linux"](#paso-2-alternativo-para-produccion-raspberry-pi--mini-pc-con-linux) de más arriba,
+   corrido DENTRO de la distro Ubuntu de WSL, con dos diferencias: en el paso de `systemctl
+   enable --now`, habilitar `liveplay-agent-record.service` +
+   [`liveplay-agent-uploader-direct.service`](../local-agent/systemd/liveplay-agent-uploader-direct.service)
+   (NO `liveplay-agent-uploader.service` — son mutuamente excluyentes, instalar solo uno de los
+   dos) y, en vez de `./check.sh`, usar `./check.sh` igual (prueba la cámara y el token, no
+   depende del modo de subida).
+
+4. **Arrancar WSL solo al prender la PC**: por default, WSL2 no arranca solo con Windows. La
+   forma más simple es una tarea en el Programador de tareas de Windows que corra al iniciar
+   sesión:
+   - Programador de tareas → Crear tarea básica → Desencadenador: "Al iniciar sesión" →
+     Acción: "Iniciar un programa" → Programa: `wsl.exe` → Argumentos: `-d Ubuntu -u root -e
+     true` (alcanza con que WSL arranque una vez; systemd adentro ya deja corriendo los
+     servicios solo).
+   - En las propiedades de esa tarea, marcar "Ejecutar tanto si el usuario inició sesión como
+     si no" y "Ejecutar con los privilegios más altos", así funciona incluso si la PC arranca
+     sin que nadie haga login a Windows (caso típico de un mini-PC desatendido en una cancha).
+
+5. **Red**: la cámara RTSP y el backend de LivePlay se alcanzan con conexiones SALIENTES desde
+   WSL2 (modo NAT por default) — no hace falta "mirrored networking" ni abrir ningún puerto en
+   el firewall de Windows para que esto funcione, a diferencia de si quisiéramos que algo DE
+   AFUERA se conecte hacia adentro de WSL (no es el caso acá).
+
+### Limitaciones de este modo (además de las generales, más abajo)
+
+- Usa la CPU/disco del mini-PC en vez de la del backend — tiene que ser efectivamente un
+  equipo con margen (no un TV box Android limitado; para esos sigue siendo mejor el modo
+  normal o el modo puente).
+- Requiere `ffmpeg`/`ffprobe` instalados en el dispositivo (ya hace falta para `record.sh`, así
+  que en la práctica ya están).
+- Las URLs de subida vencen a la hora — no es un problema en uso normal (`uploader_direct.py`
+  pide un upload-plan nuevo solo si hace falta), pero una conexión MUY lenta subiendo un
+  partido MUY largo en teoría podría necesitar más de un refresh; no se vio en la práctica
+  todavía.
+- Probado de punta a punta en sandbox (incluyendo el camino de reintento con `STATE_DIR` a
+  propósito simulando un corte a mitad de subida) pero todavía no instalado en producción real
+  en Los Pinos — ese es el próximo paso.
+
 ## Limitaciones conocidas de esta primera version
 
 - El corte del video al horario exacto del partido usa `-c copy` (sin recodificar) en las
