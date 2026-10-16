@@ -12,9 +12,35 @@ import { drizzle } from 'drizzle-orm/node-postgres';
 import * as schema from './schema';
 import { FfmpegService } from '../video-processing/ffmpeg.service';
 import { LocalDiskStorageDriver } from '../storage/local-disk.driver';
+import { S3StorageDriver } from '../storage/s3.driver';
+import { StorageDriver } from '../storage/storage.types';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 
 const SAMPLE_MEDIA_DIR = path.join(__dirname, '..', '..', '..', 'sample-media');
+
+/**
+ * Mismo criterio que StorageModule (ver storage/storage.module.ts): si el entorno donde corre
+ * el seed tiene STORAGE_PROVIDER=S3, subimos los videos de muestra al bucket real en vez de al
+ * disco local del proceso que ejecuta este script — importante porque el seed puede correrse
+ * desde cualquier máquina (Mac del dev, CI, etc.), no solo desde el servidor.
+ */
+function buildStorageDriver(): StorageDriver {
+  if (process.env.STORAGE_PROVIDER === 'S3') {
+    return new S3StorageDriver(
+      process.env.S3_BUCKET ?? '',
+      process.env.S3_ENDPOINT ?? '',
+      process.env.S3_REGION ?? 'auto',
+      process.env.S3_ACCESS_KEY ?? '',
+      process.env.S3_SECRET_KEY ?? '',
+    );
+  }
+  const storageRoot = path.join(__dirname, '..', '..', '..', 'storage-data');
+  return new LocalDiskStorageDriver(
+    storageRoot,
+    process.env.VIDEO_URL_SIGNING_SECRET ?? 'dev-video-signing-secret-change-me',
+    process.env.API_PUBLIC_URL ?? 'http://localhost:3001',
+  );
+}
 
 async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -218,8 +244,8 @@ async function main() {
   ]);
 
   console.log('🎬 Procesando video del partido de Fútbol 5 (FFmpeg -> HLS + thumbnails)...');
-  const storageRoot = path.join(__dirname, '..', '..', '..', 'storage-data');
-  const storageDriver = new LocalDiskStorageDriver(storageRoot, process.env.VIDEO_URL_SIGNING_SECRET ?? 'dev-video-signing-secret-change-me', process.env.API_PUBLIC_URL ?? 'http://localhost:3001');
+  const storageDriver = buildStorageDriver();
+  console.log(`   (storage: ${process.env.STORAGE_PROVIDER === 'S3' ? `S3 bucket "${process.env.S3_BUCKET}"` : 'disco local'})`);
   const ffmpeg = new FfmpegService();
   // Reutilizamos la misma lógica que el worker de la cola, pero llamada de forma síncrona/directa
   // para el seed (sin pasar por Redis) — ver VideoProcessingService.runProcessMatchVideoNow.

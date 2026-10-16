@@ -32,8 +32,32 @@ export class StreamController {
       throw new BadRequestException('Enlace inválido o expirado');
     }
 
+    const contentType = mime.lookup(payload.key);
     const localPath = this.storage.getLocalPathForRead?.(payload.key);
-    if (!localPath) throw new NotFoundException('Archivo no encontrado');
+
+    // Backend remoto (S3/R2/MinIO): el driver no tiene una ruta de disco local
+    // (`getLocalPathForRead` devuelve null a propósito, ver S3StorageDriver). El manifest y el
+    // VTT son livianos y los seguimos reescribiendo nosotros para que cada línea apunte a este
+    // mismo proxy; los segmentos .ts y el sprite de thumbnails, en cambio, son el peso real del
+    // video, así que redirigimos (302) a una URL firmada del propio bucket y el navegador los
+    // baja directo de ahí, sin pasar por nuestro servidor.
+    if (!localPath) {
+      const exists = await this.storage.exists(payload.key);
+      if (!exists) throw new NotFoundException('Archivo no encontrado');
+
+      if (contentType === 'application/vnd.apple.mpegurl' || contentType === 'text/vtt') {
+        const buffer = await this.storage.getObjectAsBuffer(payload.key);
+        const rewritten = this.rewriteManifestOrVtt(buffer.toString('utf-8'), contentType, payload.key);
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'no-store');
+        res.send(rewritten);
+        return;
+      }
+
+      const signedUrl = await this.storage.getSignedReadUrl(payload.key, 60 * 60 * 4);
+      res.redirect(302, signedUrl);
+      return;
+    }
 
     let stat;
     try {
@@ -42,45 +66,14 @@ export class StreamController {
       throw new NotFoundException('Archivo no encontrado');
     }
 
-    const contentType = mime.lookup(localPath);
     const range = req.headers.range;
 
-    // Los .m3u8 reescriben referencias relativas a segmentos: como el navegador pide cada
-    // segmento por su propia URL firmada (no por ruta relativa), reescribimos el manifest
-    // para que cada línea de segmento apunte a /stream/:tokenDeEseSegmento.
-    if (contentType === 'application/vnd.apple.mpegurl') {
+    // Los .m3u8 y el .vtt de miniaturas reescriben referencias relativas a segmentos/sprite:
+    // como el navegador pide cada uno por su propia URL firmada (no por ruta relativa),
+    // reescribimos el archivo para que cada línea apunte a /stream/:tokenDeEseRecurso.
+    if (contentType === 'application/vnd.apple.mpegurl' || contentType === 'text/vtt') {
       const content = await fsp.readFile(localPath, 'utf-8');
-      const baseKeyDir = payload.key.substring(0, payload.key.lastIndexOf('/'));
-      const secret = this.config.get<string>('VIDEO_URL_SIGNING_SECRET', 'dev-secret-change-me');
-      const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001');
-      const rewritten = content
-        .split('\n')
-        .map((line) => {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) return line;
-          const segKey = `${baseKeyDir}/${trimmed}`;
-          const segToken = jwt.sign({ key: segKey }, secret, { expiresIn: 60 * 60 * 4 });
-          return `${publicBaseUrl}/api/stream/${encodeURIComponent(segToken)}`;
-        })
-        .join('\n');
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Cache-Control', 'no-store');
-      res.send(rewritten);
-      return;
-    }
-
-    // El WebVTT de miniaturas referencia "sprite.jpg#xywh=..." en forma relativa; lo
-    // reescribimos igual que el manifest para que apunte a una URL firmada del sprite.
-    if (contentType === 'text/vtt') {
-      const content = await fsp.readFile(localPath, 'utf-8');
-      const baseKeyDir = payload.key.substring(0, payload.key.lastIndexOf('/'));
-      const secret = this.config.get<string>('VIDEO_URL_SIGNING_SECRET', 'dev-secret-change-me');
-      const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001');
-      const rewritten = content.replace(/^([\w.-]+\.jpg)(#xywh=[\d,]+)$/gm, (_match, fileName, fragment) => {
-        const spriteKey = `${baseKeyDir}/${fileName}`;
-        const spriteToken = jwt.sign({ key: spriteKey }, secret, { expiresIn: 60 * 60 * 4 });
-        return `${publicBaseUrl}/api/stream/${encodeURIComponent(spriteToken)}${fragment}`;
-      });
+      const rewritten = this.rewriteManifestOrVtt(content, contentType, payload.key);
       res.setHeader('Content-Type', contentType);
       res.setHeader('Cache-Control', 'no-store');
       res.send(rewritten);
@@ -109,5 +102,36 @@ export class StreamController {
       });
       fs.createReadStream(localPath).pipe(res);
     }
+  }
+
+  /**
+   * Reescribe un .m3u8 (segmentos) o un .vtt de miniaturas (líneas "sprite.jpg#xywh=...")
+   * reemplazando cada referencia relativa por una URL firmada de corta duración a este mismo
+   * endpoint — usado tanto sirviendo desde disco local como desde un bucket remoto (§25: nunca
+   * se expone la key/ruta física real al cliente).
+   */
+  private rewriteManifestOrVtt(content: string, contentType: string, key: string): string {
+    const baseKeyDir = key.substring(0, key.lastIndexOf('/'));
+    const secret = this.config.get<string>('VIDEO_URL_SIGNING_SECRET', 'dev-secret-change-me');
+    const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001');
+
+    if (contentType === 'application/vnd.apple.mpegurl') {
+      return content
+        .split('\n')
+        .map((line) => {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) return line;
+          const segKey = `${baseKeyDir}/${trimmed}`;
+          const segToken = jwt.sign({ key: segKey }, secret, { expiresIn: 60 * 60 * 4 });
+          return `${publicBaseUrl}/api/stream/${encodeURIComponent(segToken)}`;
+        })
+        .join('\n');
+    }
+
+    return content.replace(/^([\w.-]+\.jpg)(#xywh=[\d,]+)$/gm, (_match, fileName, fragment) => {
+      const spriteKey = `${baseKeyDir}/${fileName}`;
+      const spriteToken = jwt.sign({ key: spriteKey }, secret, { expiresIn: 60 * 60 * 4 });
+      return `${publicBaseUrl}/api/stream/${encodeURIComponent(spriteToken)}${fragment}`;
+    });
   }
 }
