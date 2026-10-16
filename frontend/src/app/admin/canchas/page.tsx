@@ -6,7 +6,18 @@ import AuthGuard from '@/components/AuthGuard';
 import AppShell from '@/components/AppShell';
 import { useSearchParams } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
-import type { Complex, Court, Camera, ImouDevice, SportType, CameraType, CourtOperatingHours, MercadoPagoConnectionStatus } from '@/types';
+import type {
+  Complex,
+  Court,
+  Camera,
+  ImouDevice,
+  SportType,
+  CameraType,
+  CourtOperatingHours,
+  MercadoPagoConnectionStatus,
+  ComplexCreationResult,
+  VideoAccessPassesResponse,
+} from '@/types';
 
 const SPORT_LABELS: Record<SportType, string> = { FUTBOL5: 'Fútbol 5', PADEL: 'Pádel' };
 /** Duración de turno sugerida por defecto según el deporte — el encargado la puede cambiar. */
@@ -221,6 +232,8 @@ export default function CanchasAdminPage() {
                     <VideoAccessSettingsCard complex={selectedComplex} onChanged={loadComplexes} />
                   </Suspense>
 
+                  <VideoAccessPaymentsCard complexId={selectedComplex.id} />
+
                   {showNewCourt && (
                     <div className="card p-5">
                       <NewCourtForm
@@ -432,28 +445,78 @@ function VideoAccessSettingsCard({ complex, onChanged }: { complex: Complex | nu
   );
 }
 
+/**
+ * Alta de complejo (2026-10-16): cada complejo es un cliente propio con su propio usuario
+ * administrador (ver ComplexesService.create) — por eso el formulario pide también el
+ * email/nombre/apellido de ese admin, no solo los datos del complejo. La respuesta trae una
+ * contraseña temporal en texto plano que solo se muestra ACÁ, una sola vez (nunca se vuelve a
+ * poder consultar) — por eso se bloquea el formulario con esa pantalla de "copiá esto" hasta
+ * que el SUPER_ADMIN confirma haberla guardado/compartido.
+ */
 function NewComplexForm({ onCreated }: { onCreated: (complex: Complex) => void }) {
   const [name, setName] = useState('');
   const [city, setCity] = useState('');
   const [address, setAddress] = useState('');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminFirstName, setAdminFirstName] = useState('');
+  const [adminLastName, setAdminLastName] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [created, setCreated] = useState<ComplexCreationResult | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      const complex = await api.post<Complex>('/complexes', { name, city: city || undefined, address: address || undefined });
-      setName('');
-      setCity('');
-      setAddress('');
-      onCreated(complex);
+      const res = await api.post<ComplexCreationResult>('/complexes', {
+        name,
+        city: city || undefined,
+        address: address || undefined,
+        adminEmail,
+        adminFirstName,
+        adminLastName,
+      });
+      setCreated(res);
     } catch (err) {
       setError(errorMessage(err, 'No pudimos crear el complejo'));
     } finally {
       setSaving(false);
     }
+  }
+
+  if (created) {
+    return (
+      <div className="mb-3 space-y-2 rounded-lg border border-pitch-500/40 bg-pitch-500/10 p-3 text-xs">
+        <p className="font-semibold text-pitch-300">✅ Complejo creado. Datos del administrador:</p>
+        <p className="text-ink-200">
+          Email: <span className="font-mono">{created.admin.email}</span>
+        </p>
+        <p className="text-ink-200">
+          Contraseña temporal: <span className="font-mono text-sm text-pitch-300">{created.adminTempPassword}</span>
+        </p>
+        <p className="text-ink-400">
+          Copiá esta contraseña ahora y pasásela al dueño del complejo por fuera del sistema — no se vuelve a mostrar. Puede cambiarla
+          después desde su perfil.
+        </p>
+        <button
+          className="btn-primary w-full !py-1.5 text-xs"
+          onClick={() => {
+            const complex = created.complex;
+            setCreated(null);
+            setName('');
+            setCity('');
+            setAddress('');
+            setAdminEmail('');
+            setAdminFirstName('');
+            setAdminLastName('');
+            onCreated(complex);
+          }}
+        >
+          Ya la guardé
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -462,10 +525,132 @@ function NewComplexForm({ onCreated }: { onCreated: (complex: Complex) => void }
       <input required className="input-field" placeholder="Nombre del complejo" value={name} onChange={(e) => setName(e.target.value)} />
       <input className="input-field" placeholder="Ciudad" value={city} onChange={(e) => setCity(e.target.value)} />
       <input className="input-field" placeholder="Dirección" value={address} onChange={(e) => setAddress(e.target.value)} />
+      <div className="border-t border-ink-700 pt-2">
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-400">Administrador del complejo</p>
+        <input
+          required
+          type="email"
+          className="input-field"
+          placeholder="Email del administrador"
+          value={adminEmail}
+          onChange={(e) => setAdminEmail(e.target.value)}
+        />
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <input required className="input-field" placeholder="Nombre" value={adminFirstName} onChange={(e) => setAdminFirstName(e.target.value)} />
+          <input required className="input-field" placeholder="Apellido" value={adminLastName} onChange={(e) => setAdminLastName(e.target.value)} />
+        </div>
+      </div>
       <button type="submit" disabled={saving} className="btn-primary w-full">
         {saving ? 'Creando...' : 'Crear complejo'}
       </button>
     </form>
+  );
+}
+
+/**
+ * Historial de pases de acceso a videos vendidos por un complejo (2026-10-16) — el admin del
+ * complejo necesita poder ver quién pagó, cuánto y cuándo, no solo si Mercado Pago está
+ * conectado (eso ya lo muestra `VideoAccessSettingsCard`). Filtra por fecha de creación del pase
+ * (no de pago) para que también se vean los intentos pendientes/rechazados del período, no solo
+ * los cobrados — ver el comentario en `MercadopagoService.listPasses`.
+ */
+function VideoAccessPaymentsCard({ complexId }: { complexId: string }) {
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const [data, setData] = useState<VideoAccessPassesResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const STATUS_LABELS: Record<string, string> = { PENDING: 'Pendiente', APPROVED: 'Pagado', REJECTED: 'Rechazado', EXPIRED: 'Vencido' };
+  const STATUS_CLASSES: Record<string, string> = {
+    PENDING: 'bg-amber-500/15 text-amber-400',
+    APPROVED: 'bg-pitch-500/15 text-pitch-400',
+    REJECTED: 'bg-red-500/15 text-red-400',
+    EXPIRED: 'bg-ink-700/60 text-ink-300',
+  };
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const qs = params.toString();
+      const res = await api.get<VideoAccessPassesResponse>(`/complexes/${complexId}/video-access/payments${qs ? `?${qs}` : ''}`);
+      setData(res);
+    } catch (err) {
+      setError(errorMessage(err, 'No pudimos cargar los pagos de este complejo'));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    setData(null);
+    load();
+  }, [complexId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="card space-y-4 p-5">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-ink-300">Pagos por acceso a videos</h3>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-ink-400">
+          Desde
+          <input type="date" className="input-field mt-1" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </label>
+        <label className="text-xs text-ink-400">
+          Hasta
+          <input type="date" className="input-field mt-1" value={to} onChange={(e) => setTo(e.target.value)} />
+        </label>
+        <button className="btn-secondary !py-1.5 text-xs" onClick={load} disabled={loading}>
+          {loading ? 'Buscando...' : 'Filtrar'}
+        </button>
+      </div>
+
+      {error && <p className="text-xs text-red-400">{error}</p>}
+      {!data && !error && <p className="text-xs text-ink-400">Cargando...</p>}
+
+      {data && (
+        <>
+          <p className="text-sm text-white">
+            Total pagado en el período:{' '}
+            <span className="font-semibold text-pitch-400">${data.totalApprovedArs.toLocaleString('es-AR')}</span>
+          </p>
+          {data.passes.length === 0 ? (
+            <p className="text-xs text-ink-400">No hay pases en este período.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="text-ink-400">
+                    <th className="pb-2 pr-3 font-medium">Fecha</th>
+                    <th className="pb-2 pr-3 font-medium">Usuario</th>
+                    <th className="pb-2 pr-3 font-medium">Monto</th>
+                    <th className="pb-2 font-medium">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.passes.map((p) => (
+                    <tr key={p.id} className="border-t border-ink-800">
+                      <td className="py-2 pr-3 text-ink-300">{new Date(p.createdAt).toLocaleDateString('es-AR')}</td>
+                      <td className="py-2 pr-3 text-ink-300">{p.user ? `${p.user.firstName} ${p.user.lastName}` : '—'}</td>
+                      <td className="py-2 pr-3 text-ink-300">${p.amountArs.toLocaleString('es-AR')}</td>
+                      <td className="py-2">
+                        <span className={clsx('badge', STATUS_CLASSES[p.status] ?? 'bg-ink-700/60 text-ink-300')}>
+                          {STATUS_LABELS[p.status] ?? p.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

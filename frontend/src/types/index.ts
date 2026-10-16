@@ -38,6 +38,32 @@ export interface MercadoPagoConnectionStatus {
   connectedAt: string | null;
 }
 
+/** Respuesta de POST /complexes (ver ComplexesService.create): además del complejo, devuelve el
+ * usuario COMPLEX_ADMIN recién creado y su contraseña temporal EN TEXTO PLANO — solo viaja acá,
+ * una vez, nunca se puede volver a consultar. */
+export interface ComplexCreationResult {
+  complex: Complex;
+  admin: { id: string; email: string; firstName: string; lastName: string };
+  adminTempPassword: string;
+}
+
+/** Un pase de acceso a videos vendido (GET .../video-access/payments) — ver `videoAccessPasses`
+ * en el backend. `user` puede venir null si el usuario que pagó fue borrado después. */
+export interface VideoAccessPass {
+  id: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'EXPIRED';
+  amountArs: number;
+  purchasedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  user: { firstName: string; lastName: string; email: string } | null;
+}
+
+export interface VideoAccessPassesResponse {
+  passes: VideoAccessPass[];
+  totalApprovedArs: number;
+}
+
 /** Horario fijo de turnos de una cancha — ver `MatchSchedulerService` en el backend. */
 export interface CourtOperatingHours {
   /** 1=lunes ... 7=domingo */

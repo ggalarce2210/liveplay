@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { BadGatewayException, BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, gte, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { complexes, complexMercadoPagoAccounts, users, videoAccessPasses } from '../db/schema';
 import { AuthUser } from '../common/decorators/current-user.decorator';
@@ -183,6 +183,39 @@ export class MercadopagoService {
 
   async disconnect(complexId: string): Promise<void> {
     await this.db.delete(complexMercadoPagoAccounts).where(eq(complexMercadoPagoAccounts.complexId, complexId));
+  }
+
+  /**
+   * Historial de pases (pagados, pendientes o rechazados) de un complejo, para que su admin
+   * pueda ver quién pagó y cuánto — filtra por `createdAt` (no por `purchasedAt`, que es null en
+   * pases que nunca llegaron a aprobarse) porque queremos poder ver también los intentos
+   * fallidos/pendientes del período, no solo los cobrados. `totalApprovedArs` suma solo los
+   * `APPROVED` dentro del rango — es la plata que realmente entró.
+   */
+  async listPasses(complexId: string, from?: string, to?: string) {
+    const conditions = [eq(videoAccessPasses.complexId, complexId)];
+    if (from) {
+      const fromDate = new Date(from);
+      if (!Number.isNaN(fromDate.getTime())) conditions.push(gte(videoAccessPasses.createdAt, fromDate));
+    }
+    if (to) {
+      const toDate = new Date(to);
+      if (!Number.isNaN(toDate.getTime())) {
+        // "to" suele venir como fecha sin hora (ej. del <input type="date">) — la llevamos al
+        // final de ese día para que incluya todo lo pagado ese mismo día.
+        toDate.setHours(23, 59, 59, 999);
+        conditions.push(lte(videoAccessPasses.createdAt, toDate));
+      }
+    }
+
+    const passes = await this.db.query.videoAccessPasses.findMany({
+      where: and(...conditions),
+      with: { user: { columns: { firstName: true, lastName: true, email: true } } },
+      orderBy: (p, { desc }) => [desc(p.createdAt)],
+    });
+
+    const totalApprovedArs = passes.filter((p) => p.status === 'APPROVED').reduce((sum, p) => sum + p.amountArs, 0);
+    return { passes, totalApprovedArs };
   }
 
   /** Devuelve un access_token vigente para ESE complejo, renovándolo primero si está por vencer. */

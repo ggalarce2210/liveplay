@@ -45,6 +45,17 @@ export class MercadopagoController {
     return { ok: true };
   }
 
+  /** Historial de pases vendidos — lo ve el admin del complejo (o SUPER_ADMIN) para saber quién
+   * pagó y cuánto entró. `from`/`to` son fechas "YYYY-MM-DD" opcionales (ver VideoAccessPaymentsCard
+   * en el frontend). */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN, Role.COMPLEX_ADMIN)
+  @Get('complexes/:id/video-access/payments')
+  async listPayments(@Param('id') id: string, @CurrentUser() user: AuthUser, @Query('from') from?: string, @Query('to') to?: string) {
+    await this.service.assertCanManageComplex(user, id);
+    return this.service.listPasses(id, from, to);
+  }
+
   /** Redirect de Mercado Pago después de que el dueño del complejo aprueba la vinculación —
    * esto lo pega el NAVEGADOR del usuario (no un fetch del frontend), por eso responde con un
    * 302 a una página del panel admin en vez de JSON. Público: no hay sesión de LivePlay en ese

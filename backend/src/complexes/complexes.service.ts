@@ -1,9 +1,26 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { and, eq, asc, ilike, isNotNull } from 'drizzle-orm';
+import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { DbService } from '../db/db.service';
-import { complexes, courts, subscriptions } from '../db/schema';
+import { complexes, courts, subscriptions, users } from '../db/schema';
 
 type SportType = 'FUTBOL5' | 'PADEL';
+
+/**
+ * Contraseña temporal del administrador que se crea junto con el complejo (ver `create` más
+ * abajo) — se muestra UNA SOLA VEZ en la respuesta del alta, nunca se guarda en texto plano ni
+ * se vuelve a poder consultar; el SUPER_ADMIN que da de alta el complejo se la tiene que pasar
+ * al dueño por fuera del sistema. Alfabeto sin caracteres ambiguos (0/O, 1/l/I) para que sea
+ * fácil de transcribir a mano si hace falta.
+ */
+function generateTempPassword(): string {
+  const charset = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const bytes = crypto.randomBytes(12);
+  let out = '';
+  for (let i = 0; i < bytes.length; i++) out += charset[bytes[i] % charset.length];
+  return out;
+}
 
 @Injectable()
 export class ComplexesService {
@@ -55,11 +72,58 @@ export class ComplexesService {
     });
   }
 
-  async create(data: { name: string; address?: string; city?: string; timezone?: string; openingHours?: any }) {
+  /**
+   * Alta de un complejo (2026-10-16): cada complejo es un cliente propio, con su propio usuario
+   * administrador (`COMPLEX_ADMIN`, `managedComplexId` apuntando a este complejo) — necesario
+   * para que después pueda entrar a conectar su cuenta de Mercado Pago y ver sus pagos (ver
+   * `MercadopagoService`). La contraseña se genera acá mismo y se devuelve en texto plano SOLO
+   * en esta respuesta (ver `generateTempPassword`); nunca se persiste ni se loguea en claro.
+   * No pasa por `AuthService.register` a propósito: ese flujo exige verificar el email antes de
+   * poder loguearse, pero acá es el SUPER_ADMIN quien da de alta a otra persona, no un
+   * self-signup, así que la cuenta queda verificada desde el vamos.
+   */
+  async create(data: {
+    name: string;
+    address?: string;
+    city?: string;
+    timezone?: string;
+    openingHours?: any;
+    adminEmail: string;
+    adminFirstName: string;
+    adminLastName: string;
+  }) {
+    if (!data.adminEmail || !data.adminFirstName || !data.adminLastName) {
+      throw new BadRequestException('Falta el email, nombre o apellido del administrador del complejo');
+    }
+    const existing = await this.db.query.users.findFirst({ where: eq(users.email, data.adminEmail) });
+    if (existing) throw new ConflictException('Ya existe un usuario con ese email');
+
+    const adminTempPassword = generateTempPassword();
+    const passwordHash = await bcrypt.hash(adminTempPassword, 12);
+
     return this.db.transaction(async (tx) => {
-      const [complex] = await tx.insert(complexes).values(data).returning();
+      const [complex] = await tx
+        .insert(complexes)
+        .values({ name: data.name, address: data.address, city: data.city, timezone: data.timezone, openingHours: data.openingHours })
+        .returning();
       await tx.insert(subscriptions).values({ complexId: complex.id });
-      return complex;
+      const [admin] = await tx
+        .insert(users)
+        .values({
+          email: data.adminEmail,
+          passwordHash,
+          firstName: data.adminFirstName,
+          lastName: data.adminLastName,
+          role: 'COMPLEX_ADMIN',
+          managedComplexId: complex.id,
+          emailVerifiedAt: new Date(),
+        })
+        .returning();
+      return {
+        complex,
+        admin: { id: admin.id, email: admin.email, firstName: admin.firstName, lastName: admin.lastName },
+        adminTempPassword,
+      };
     });
   }
 
