@@ -69,6 +69,23 @@
 }
 
 @layer components {
+  /* Destello periodico sobre el logo (pedido del usuario 2026-10-08, pantalla de login) -
+     reusa la misma animacion "lp-sweep" que ya usa IntroSplash, asi el brillo se ve consistente
+     con el resto del sitio en vez de inventar un timing nuevo. */
+  .logo-shine {
+    isolation: isolate;
+  }
+  .logo-shine::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.65) 50%, transparent 65%);
+    transform: translateX(-120%);
+    animation: lp-sweep 2.8s ease-in-out infinite;
+    animation-delay: 1.2s;
+    pointer-events: none;
+  }
+
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg bg-pitch-500 px-5 py-2.5 text-sm font-semibold text-white shadow-glow transition hover:bg-pitch-400 active:scale-[0.98];
   }

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -7,6 +8,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DbModule } from './db/db.module';
 import { StorageModule } from './storage/storage.module';
 import { StreamController } from './storage/stream.controller';
+import { AgentUploadController } from './storage/agent-upload.controller';
 import { VideoProcessingModule } from './video-processing/video-processing.module';
 
 import { AuthModule } from './auth/auth.module';
@@ -28,6 +30,9 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    // Habilita @Cron(...) en cualquier servicio — usado hoy por MatchSchedulerService para
+    // mantener siempre generada la grilla de próximos turnos por cancha (ver ese archivo).
+    ScheduleModule.forRoot(),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     DbModule,
     StorageModule,
@@ -48,7 +53,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
     NotificationsModule,
     AdminModule,
   ],
-  controllers: [StreamController],
+  controllers: [StreamController, AgentUploadController],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_INTERCEPTOR, useClass: AuditLogInterceptor },

@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { courts } from '../db/schema';
+import { MatchSchedulerService } from '../matches/match-scheduler.service';
 
 @Injectable()
 export class CourtsService {
-  constructor(private dbService: DbService) {}
+  constructor(private dbService: DbService, private matchScheduler: MatchSchedulerService) {}
   private get db() {
     return this.dbService.db;
   }
@@ -20,11 +21,23 @@ export class CourtsService {
 
   async create(data: any) {
     const [created] = await this.db.insert(courts).values(data).returning();
+    // Si la cancha ya nace con un horario de turnos configurado, generamos los próximos
+    // partidos al toque en vez de esperar a la próxima vuelta del cron (hasta 1h) — ver
+    // MatchSchedulerService.
+    if (created?.operatingHours) await this.matchScheduler.generateForCourt(created.id);
     return created;
   }
 
   async update(id: string, data: any) {
     const [updated] = await this.db.update(courts).set({ ...data, updatedAt: new Date() }).where(eq(courts.id, id)).returning();
+    if (updated?.operatingHours) {
+      // Antes de generar los turnos que correspondan al horario nuevo, se podan los que haya
+      // generado el horario VIEJO y que ya no entren en este (sin video grabado todavía) — ver
+      // el comentario largo en `MatchSchedulerService.pruneStaleSlots` para el bug real que
+      // esto corrige (2026-10-04).
+      await this.matchScheduler.pruneStaleSlots(updated.id);
+      await this.matchScheduler.generateForCourt(updated.id);
+    }
     return updated;
   }
 

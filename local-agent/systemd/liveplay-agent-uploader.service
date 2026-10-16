@@ -1,0 +1,16 @@
+# Ver liveplay-agent-record.service. Mismo esquema, para uploader.py.
+[Unit]
+Description=LivePlay agente local - deteccion y subida de partidos
+After=network-online.target liveplay-agent-record.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/liveplay-repo/local-agent
+ExecStart=/usr/bin/python3 /home/pi/liveplay-repo/local-agent/uploader.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

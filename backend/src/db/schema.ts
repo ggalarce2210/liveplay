@@ -40,7 +40,7 @@ const timestamps = {
 export const roleEnum = pgEnum('role', ['SUPER_ADMIN', 'COMPLEX_ADMIN', 'PLAYER']);
 export const sportTypeEnum = pgEnum('sport_type', ['FUTBOL5', 'PADEL']);
 export const courtStatusEnum = pgEnum('court_status', ['ACTIVE', 'MAINTENANCE', 'INACTIVE']);
-export const cameraTypeEnum = pgEnum('camera_type', ['IP_CAMERA', 'RTSP', 'NVR', 'DVR']);
+export const cameraTypeEnum = pgEnum('camera_type', ['IP_CAMERA', 'RTSP', 'NVR', 'DVR', 'IMOU_CLOUD']);
 export const cameraStatusEnum = pgEnum('camera_status', ['ONLINE', 'OFFLINE', 'UNKNOWN']);
 export const matchStatusEnum = pgEnum('match_status', ['SCHEDULED', 'RECORDING', 'PROCESSING', 'READY', 'FAILED']);
 export const videoStatusEnum = pgEnum('video_status', ['PENDING', 'PROCESSING', 'READY', 'FAILED']);
@@ -113,6 +113,15 @@ export const courts = pgTable('courts', {
   sportType: sportTypeEnum('sport_type').notNull(),
   status: courtStatusEnum('status').notNull().default('ACTIVE'),
   location: text('location'),
+  /**
+   * Horario fijo de turnos de la cancha, usado por `MatchSchedulerService` (backend/src/
+   * matches/match-scheduler.service.ts) para generar automáticamente un partido por cada
+   * turno de la grilla, sin que nadie tenga que "cargar" un partido a mano (decisión
+   * 2026-09-19: en un club real nadie hace eso, la cancha simplemente tiene turnos fijos).
+   * Forma esperada (null = esta cancha no genera turnos automáticos):
+   *   { openDays: number[] (1=lunes..7=domingo), turnStart: "HH:MM", turnEnd: "HH:MM" (hora
+   *     de INICIO del último turno, no de cierre), turnDurationMinutes: number }
+   */
   operatingHours: jsonb('operating_hours'),
   ...timestamps,
 }, (t) => ({
@@ -134,6 +143,31 @@ export const cameras = pgTable('cameras', {
    * guardamos el token en texto plano, solo su hash (§25, mismo criterio que las contraseñas).
    */
   agentKeyHash: text('agent_key_hash'),
+  /**
+   * Campos usados solo cuando `type = 'IMOU_CLOUD'`: la cámara no está en la red del backend
+   * (ni tiene agente local) sino vinculada a una cuenta cloud de Imou/Dahua (ver
+   * `backend/src/cameras/imou-cloud.client.ts`). `imouDeviceId` es el número de serie del
+   * dispositivo tal como lo reconoce el open platform de Imou; `imouChannelId` es casi siempre
+   * "0" salvo NVRs multicanal. No guardamos el `code`/contraseña de vinculación una vez que
+   * `bindDevice` se ejecutó con éxito — Imou ya asoció el dispositivo a nuestra `appId`.
+   */
+  imouDeviceId: text('imou_device_id'),
+  imouChannelId: text('imou_channel_id'),
+  /**
+   * Alta simplificada por "código de enrolamiento" (2026-09-30): en vez de tipear config.env a
+   * mano en el TV box (proceso "muy engorroso" según feedback del usuario — ver AGENTE.md), el
+   * admin genera desde el panel un código corto de un solo uso; el TV box lo canjea contra
+   * `POST /agent/enroll` y recibe de vuelta el bundle completo de config (backendUrl, token de
+   * agente, RTSP URL). Estos 3 campos son efímeros: se completan al generar el código y se
+   * borran los tres apenas se canjea (o quedan vencidos) — nunca conviven con un código ya usado.
+   * `pendingAgentToken` es la única excepción al criterio de "nunca texto plano" de
+   * `agentKeyHash`: acá vive el token real en texto plano durante la ventana de canje (10 min)
+   * porque hace falta poder devolvérselo tal cual al TV box; fuera de esa ventana siempre es
+   * null, igual que los otros dos.
+   */
+  enrollmentCodeHash: text('enrollment_code_hash'),
+  enrollmentCodeExpiresAt: timestamp('enrollment_code_expires_at', { withTimezone: true }),
+  pendingAgentToken: text('pending_agent_token'),
   ...timestamps,
 });
 
@@ -193,6 +227,7 @@ export const videos = pgTable('videos', {
   storageBaseKey: text('storage_base_key').notNull(),
   originalFileKey: text('original_file_key'),
   hlsManifestKey: text('hls_manifest_key'),
+  posterKey: text('poster_key'),
   thumbnailSpriteKey: text('thumbnail_sprite_key'),
   thumbnailVttKey: text('thumbnail_vtt_key'),
   durationSeconds: doublePrecision('duration_seconds'),
@@ -201,6 +236,15 @@ export const videos = pgTable('videos', {
   fps: doublePrecision('fps'),
   sizeBytes: doublePrecision('size_bytes'),
   errorMessage: text('error_message'),
+  /**
+   * Incidente 2026-10-08: en "modo puente" (ver backend/AGENTE.md) un corte de wifi en la cancha
+   * a mitad de partido puede hacer que la grabación de origen llegue incompleta sin que FFmpeg
+   * tire ningún error (procesa fielmente el archivo corto que recibió). `durationWarning` queda
+   * en `true` cuando `VideoProcessingService.runMatchVideoPipeline` detecta que la duración real
+   * quedó muy por debajo de la esperada para el turno (`matches.endTime - matches.startTime`),
+   * para poder distinguir ese caso de un video `READY` genuinamente completo.
+   */
+  durationWarning: boolean('duration_warning').notNull().default(false),
   ...timestamps,
 });
 
@@ -250,7 +294,16 @@ export const bookmarks = pgTable('bookmarks', {
 
 export const clips = pgTable('clips', {
   id: id(),
-  matchId: uuid('match_id').notNull().references(() => matches.id, { onDelete: 'cascade' }),
+  // Nullable con onDelete 'set null' (antes 'cascade', not null) desde el 2026-10-05: un clip
+  // es un archivo independiente (storageKey propio, generado por FFmpeg a partir del video
+  // original sin tocarlo), así que no tiene que desaparecer solo porque el partido de origen
+  // se borra — y ahora SÍ se borra de verdad, ver MatchRetentionService (purga partidos de más
+  // de MATCH_RETENTION_DAYS). Si el FK siguiera en cascada, borrar un partido viejo borraría
+  // también los clips ya generados a partir de él (y dejaría su archivo huérfano en el storage
+  // para siempre), contradiciendo la regla ya establecida de que "los clips no vencen" (ver
+  // sección "4 fixes pre-lanzamiento" del resumen del proyecto). Ver migración
+  // 0006_clips_match_id_nullable.sql.
+  matchId: uuid('match_id').references(() => matches.id, { onDelete: 'set null' }),
   createdByUserId: uuid('created_by_user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
   title: text('title').notNull(),
   startSeconds: doublePrecision('start_seconds').notNull(),

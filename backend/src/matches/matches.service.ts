@@ -1,25 +1,29 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, gte, inArray, lte } from 'drizzle-orm';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { and, asc, desc, eq, gte, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
+import { StreamTokenService } from '../storage/stream-token.service';
 import { SearchMatchesDto } from './dto/search-matches.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, formatInTimeZone, todayInTimeZone } from '../common/timezone';
+import { buildStorageBaseKey } from './storage-key.util';
 
-function startOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-function endOfDay(d: Date) {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
-}
+// Decisión del cliente (2026-09-24): los partidos grabados solo quedan disponibles para ver
+// durante 1 semana (los clips generados a partir de ellos NO tienen este límite — ver
+// ClipsController.list, que lee directo de `clips` y nunca pasa por acá). Es un límite de
+// PRODUCTO aplicado siempre, no un filtro más que el usuario elige: por eso se combina con AND
+// contra cualquier otro filtro de fecha, en vez de vivir como una opción de `datePreset`.
+const MATCH_AVAILABILITY_DAYS = 7;
+const POSTER_URL_TTL_SECONDS = 60 * 60 * 4; // mismo TTL que el resto de las URLs firmadas de video
 
 @Injectable()
 export class MatchesService {
-  constructor(private dbService: DbService, private videoProcessing: VideoProcessingService) {}
+  constructor(
+    private dbService: DbService,
+    private videoProcessing: VideoProcessingService,
+    private streamTokens: StreamTokenService,
+  ) {}
   private get db() {
     return this.dbService.db;
   }
@@ -34,38 +38,50 @@ export class MatchesService {
   async search(query: SearchMatchesDto, requester: AuthUser) {
     const conditions = [] as any[];
 
-    if (requester.role === 'PLAYER') {
-      const rows = await this.db.query.matchPlayers.findMany({ where: eq(matchPlayers.userId, requester.userId), columns: { matchId: true } });
-      const matchIds = rows.map((r) => r.matchId);
-      if (matchIds.length === 0) return [];
-      conditions.push(inArray(matches.id, matchIds));
-    }
+    // Antes esto acotaba la búsqueda de un PLAYER a solo los partidos donde alguien lo había
+    // asignado a mano en `matchPlayers`. Desde que los partidos se generan solos por horario
+    // de turno (ver MatchSchedulerService, 2026-09-19) nadie asigna jugadores nunca, así que
+    // esa restricción dejaba la búsqueda vacía para siempre. Decisión del cliente: cualquier
+    // jugador logueado puede buscar y ver cualquier turno grabado (mismo criterio que ya
+    // aplicaba para SUPER_ADMIN/COMPLEX_ADMIN) — ver discusión en el chat del 2026-09-19.
+    // Si en el futuro se quiere volver a acotar (ej. con un código por turno), es acá.
 
     if (query.complexId) conditions.push(eq(matches.complexId, query.complexId));
     if (query.courtId) conditions.push(eq(matches.courtId, query.courtId));
     if (query.sportType) conditions.push(eq(matches.sportType, query.sportType));
 
-    const now = new Date();
+    // Mismo huso horario que usa el resto del cliente (ver DEFAULT_TIMEZONE) — "hoy"/"ayer" acá
+    // significan el día de calendario tal como lo vive el complejo, no el día UTC del servidor
+    // (ver el comentario largo en `dayRangeUtc`, que documenta el bug real que esto corrige —
+    // mismo bug que tenía `DiscoveryService.matchesByCourt`, reportado por el usuario viendo el
+    // buscador público mostrar partidos de "ayer" bajo el filtro "Hoy").
+    const today = todayInTimeZone(DEFAULT_TIMEZONE);
     if (query.date) {
       conditions.push(eq(matches.date, query.date));
     } else if (query.dateFrom || query.dateTo) {
       if (query.dateFrom) conditions.push(gte(matches.date, query.dateFrom));
       if (query.dateTo) conditions.push(lte(matches.date, query.dateTo));
     } else if (query.datePreset === 'today') {
-      conditions.push(gte(matches.startTime, startOfDay(now)), lte(matches.startTime, endOfDay(now)));
+      const { start, end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'yesterday') {
-      const y = new Date(now);
-      y.setDate(y.getDate() - 1);
-      conditions.push(gte(matches.startTime, startOfDay(y)), lte(matches.startTime, endOfDay(y)));
+      const { start, end } = dayRangeUtc(addDaysToDateStr(today, -1), DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'week') {
-      const weekAgo = new Date(now);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      conditions.push(gte(matches.startTime, startOfDay(weekAgo)), lte(matches.startTime, endOfDay(now)));
+      const { start } = dayRangeUtc(addDaysToDateStr(today, -7), DEFAULT_TIMEZONE);
+      const { end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     } else if (query.datePreset === 'month') {
-      const monthAgo = new Date(now);
-      monthAgo.setMonth(monthAgo.getMonth() - 1);
-      conditions.push(gte(matches.startTime, startOfDay(monthAgo)), lte(matches.startTime, endOfDay(now)));
+      const { start } = dayRangeUtc(addMonthsToDateStr(today, -1), DEFAULT_TIMEZONE);
+      const { end } = dayRangeUtc(today, DEFAULT_TIMEZONE);
+      conditions.push(gte(matches.startTime, start), lt(matches.startTime, end));
     }
+
+    // Ventana de disponibilidad de 1 semana (ver constante arriba): se aplica SIEMPRE, con AND,
+    // sin importar qué haya elegido el filtro de fecha — no es una opción más, es el límite real
+    // de lo que el club deja disponible para reproducir.
+    const { start: availabilityCutoff } = dayRangeUtc(addDaysToDateStr(today, -MATCH_AVAILABILITY_DAYS), DEFAULT_TIMEZONE);
+    conditions.push(gte(matches.startTime, availabilityCutoff));
 
     let result = await this.db.query.matches.findMany({
       where: conditions.length ? and(...conditions) : undefined,
@@ -79,18 +95,43 @@ export class MatchesService {
       orderBy: [desc(matches.startTime)],
     });
 
+    // OJO timezone: `m.startTime` es un instante UTC; `Date.getHours()`/`getMinutes()` devuelven
+    // la hora LOCAL AL SERVIDOR (UTC en producción), no la del complejo — comparar eso contra un
+    // horario que el usuario tipeó pensando en la hora real de la cancha (ej. "08:00") quedaba
+    // desalineado en 3hs contra lo que la UI le mostraba para ese mismo partido. Se formatea en
+    // el huso horario del complejo (`m.complex.timezone`, con fallback al único huso que maneja
+    // este cliente) para que coincida con lo que ve el usuario en pantalla.
     if (query.timeFrom || query.timeTo) {
       result = result.filter((m) => {
-        const hh = String(m.startTime.getHours()).padStart(2, '0');
-        const mm = String(m.startTime.getMinutes()).padStart(2, '0');
-        const t = `${hh}:${mm}`;
+        const t = formatInTimeZone(m.startTime, m.complex?.timezone || DEFAULT_TIMEZONE);
         if (query.timeFrom && t < query.timeFrom) return false;
         if (query.timeTo && t > query.timeTo) return false;
         return true;
       });
     }
 
-    return result;
+    // Decisión del cliente (2026-09-19, reunión con el club): el buscador es para revisar
+    // partidos ya grabados, no para mostrar el calendario completo de turnos. Desde que los
+    // turnos se generan solos por horario (ver MatchSchedulerService) la enorme mayoría de los
+    // resultados eran turnos "Programado" sin video todavía — ruido que tapaba el partido que
+    // el usuario realmente buscaba. Se filtran acá (después de los demás filtros, así no hay
+    // que tocar la lógica de arriba): solo se devuelven partidos con un video ya asociado. Si
+    // en el futuro se quiere un buscador de turnos disponibles para reservar, es un endpoint
+    // aparte — no reutilizar este quitando el filtro.
+    result = result.filter((m) => !!m.video);
+
+    return result.map((m) => this.withPosterUrl(m));
+  }
+
+  /**
+   * Firma `video.posterKey` (si el video lo tiene) en una URL de corta duración vía
+   * `/api/stream/:token`, siguiendo el mismo criterio que el resto de las URLs de video (§25:
+   * nunca la key/ruta física real). El campo llega como `video.posterUrl` — la tarjeta de
+   * partido en el frontend lo usa como imagen de portada en vez del ícono genérico.
+   */
+  private withPosterUrl<T extends { video?: { posterKey?: string | null } | null }>(match: T): T {
+    if (!match.video?.posterKey) return match;
+    return { ...match, video: { ...match.video, posterUrl: this.streamTokens.sign(match.video.posterKey, POSTER_URL_TTL_SECONDS) } };
   }
 
   async get(id: string, requester: AuthUser) {
@@ -106,16 +147,7 @@ export class MatchesService {
       },
     });
     if (!match) throw new NotFoundException('Partido no encontrado');
-    this.assertCanAccess(match, requester);
-    return match;
-  }
-
-  /** Un jugador solo puede acceder a los partidos donde figura como jugador (§25). */
-  private assertCanAccess(match: { players: { userId: string | null }[] }, requester: AuthUser) {
-    if (requester.role === 'PLAYER') {
-      const isPlayer = match.players.some((p) => p.userId === requester.userId);
-      if (!isPlayer) throw new ForbiddenException('No tenés acceso a este partido');
-    }
+    return this.withPosterUrl(match);
   }
 
   async create(data: any) {
@@ -159,11 +191,20 @@ export class MatchesService {
   /**
    * Asocia un video subido (o llegado desde el NVR) a un partido y dispara el pipeline de
    * procesamiento (FFmpeg -> HLS -> thumbnails) de forma asíncrona (§10, §28).
+   *
+   * `sourceFilePath` es la ruta local EFÍMERA donde Multer dejó el archivo subido
+   * (/tmp/ecp-uploads/<hash>, ver *.controller.ts). Incidente 2026-10-08: antes se pasaba esa
+   * ruta directo al job de BullMQ, que queda durmiendo en Redis hasta que el worker lo ejecuta —
+   * si el contenedor de Render se reciclaba en el medio (deploy, OOM, o el spin-down por
+   * inactividad del free tier), ese archivo temporal desaparecía y el video original se perdía
+   * para siempre. Ahora `ingestSourceFile` lo sube primero a storage persistente (R2/S3) y recién
+   * ahí encola el job con la key persistente — inmune a cuántos reinicios pasen antes de que el
+   * worker llegue a correrlo.
    */
   async attachVideo(matchId: string, sourceFilePath: string) {
     const match = await this.db.query.matches.findFirst({ where: eq(matches.id, matchId) });
     if (!match) throw new NotFoundException('Partido no encontrado');
-    const storageBaseKey = this.buildStorageBaseKey(match);
+    const storageBaseKey = buildStorageBaseKey(match);
 
     const existing = await this.db.query.videos.findFirst({ where: eq(videos.matchId, matchId) });
     let video;
@@ -172,21 +213,7 @@ export class MatchesService {
     } else {
       [video] = await this.db.insert(videos).values({ matchId, storageBaseKey, status: 'PENDING' }).returning();
     }
-    await this.videoProcessing.enqueueProcessMatchVideo(video.id, sourceFilePath);
+    await this.videoProcessing.ingestSourceFile(video.id, sourceFilePath);
     return video;
-  }
-
-  /** Layout lógico de storage: complejo/cancha/año/mes/día/hora (§10) — invisible para el frontend. */
-  private buildStorageBaseKey(match: { complexId: string; courtId: string; startTime: Date }): string {
-    const d = match.startTime;
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return [
-      `complex-${match.complexId}`,
-      `court-${match.courtId}`,
-      d.getFullYear(),
-      pad(d.getMonth() + 1),
-      pad(d.getDate()),
-      `${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`,
-    ].join('/');
   }
 }

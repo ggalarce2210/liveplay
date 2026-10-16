@@ -11,6 +11,7 @@ export interface ProbeResult {
   width: number;
   height: number;
   fps: number;
+  videoCodec: string;
 }
 
 export interface HlsSegmentInfo {
@@ -37,7 +38,7 @@ export class FfmpegService {
     const { stdout } = await execFileAsync('ffprobe', [
       '-v', 'error',
       '-select_streams', 'v:0',
-      '-show_entries', 'stream=width,height,r_frame_rate',
+      '-show_entries', 'stream=width,height,r_frame_rate,codec_name',
       '-show_entries', 'format=duration',
       '-of', 'json',
       inputPath,
@@ -50,23 +51,61 @@ export class FfmpegService {
       width: stream.width ?? 0,
       height: stream.height ?? 0,
       fps: den ? num / den : num,
+      videoCodec: stream.codec_name ?? '',
     };
   }
 
   /**
    * Genera un HLS VOD real: manifest .m3u8 + segmentos .ts de ~6s.
-   * `-c copy` evita re-codificar (rápido) cuando el input ya es H.264/AAC; en producción,
-   * para ingesta desde NVR/RTSP con codecs variados, se debería forzar `-c:v libx264 -c:a aac`.
+   *
+   * Video: antes esto era siempre `-c:v copy` (evita re-codificar: rápido, sin costo de CPU)
+   * asumiendo que el input ya viene en H.264, el caso más común en cámaras IP/NVR. Bug real
+   * encontrado 2026-10-01 con el primer partido real grabado por una cámara Dahua de la casa
+   * del usuario: esa cámara graba en **HEVC/H.265** (confirmado con `ffprobe` sobre la
+   * grabación real), y los navegadores (Chrome incluido) no soportan decodificar HEVC vía
+   * Media Source Extensions (lo que usa hls.js) — el resultado es un reproductor que carga el
+   * manifest y muestra los controles/timeline con normalidad, pero la imagen queda
+   * completamente negra, porque el video nunca se puede decodificar. Como esto ya estaba
+   * anotado como riesgo futuro en el comentario original de esta función (nunca se había
+   * disparado porque todas las pruebas anteriores usaban video sintético H.264 generado con
+   * FFmpeg), ahora se hace lo que ese comentario proponía: `probe()` primero, y si el codec de
+   * video de origen no es H.264, se re-codifica a `libx264` (con `-threads 1`, mismo criterio
+   * de `generateClip`, para no competir por CPU en la instancia chica de Render); si ya es
+   * H.264 se sigue copiando tal cual, sin perder la velocidad en el caso más común.
+   *
+   * Audio: se fuerza `-c:a aac` en vez de copiarlo tal cual (2026-09-19, pregunta del
+   * cliente sobre si el audio de la cámara se va a escuchar). Muchas cámaras IP económicas
+   * (frecuente en Dahua/genéricas chinas) mandan el audio en G.711 (PCM A-law/u-law) en vez
+   * de AAC — un `-c copy` a secas dejaría ese audio "adentro" del archivo pero MUDO en
+   * cualquier reproductor web, porque HLS vía Media Source Extensions (lo que usa hls.js en
+   * el navegador) solo decodifica audio AAC (o MP3), no G.711. Re-codificar solo el audio es
+   * una operación liviana (nada que ver con re-codificar video, que sí es costoso) y deja el
+   * pipeline a prueba de cualquier códec de audio que mande la cámara. Si el input no tiene
+   * pista de audio, este flag simplemente no tiene nada que hacer y no rompe nada.
    */
   async generateHls(inputPath: string, outputDir: string): Promise<{ manifestFile: string; segments: HlsSegmentInfo[] }> {
     await fs.mkdir(outputDir, { recursive: true });
     const manifestFile = 'master.m3u8';
     const segmentPattern = 'segment_%05d.ts';
 
+    const probeResult = await this.probe(inputPath);
+    const needsTranscode = probeResult.videoCodec !== 'h264';
+    const videoArgs = needsTranscode
+      ? ['-c:v', 'libx264', '-preset', 'veryfast', '-threads', '1']
+      : ['-c:v', 'copy'];
+    if (needsTranscode) {
+      this.logger.warn(
+        `generateHls: video de origen en codec "${probeResult.videoCodec}" (no H.264) — ` +
+          're-codificando a libx264 para que sea reproducible en el navegador.',
+      );
+    }
+
     await execFileAsync('ffmpeg', [
       '-y',
       '-i', inputPath,
-      '-c', 'copy',
+      ...videoArgs,
+      '-c:a', 'aac',
+      '-b:a', '128k',
       '-start_number', '0',
       '-hls_time', String(SEGMENT_TARGET_SECONDS),
       '-hls_playlist_type', 'vod',
@@ -116,15 +155,31 @@ export class FfmpegService {
     outputDir: string,
     opts: { intervalSeconds?: number; columns?: number; rows?: number; tileWidth?: number } = {},
   ): Promise<{ spriteFile: string; vttFile: string }> {
-    const interval = opts.intervalSeconds ?? 5;
     const columns = opts.columns ?? 10;
     const rows = opts.rows ?? 10;
     const tileWidth = opts.tileWidth ?? 160;
+    const maxTiles = columns * rows;
 
     await fs.mkdir(outputDir, { recursive: true });
     const spriteFile = 'sprite.jpg';
     const vttFile = 'thumbnails.vtt';
     const tileHeight = Math.round((tileWidth * 9) / 16);
+
+    // El filtro `tile` de FFmpeg junta `columns*rows` frames en una sola imagen de salida; si
+    // el video genera MÁS frames que eso (partido largo + intervalo fijo chico), el filtro
+    // intenta escribir una SEGUNDA imagen de sprite al mismo nombre de archivo fijo
+    // ("sprite.jpg", sin patrón %d/-update), y FFmpeg aborta con "Cannot write more than one
+    // file with the same name" (bug real encontrado 2026-10-01 con el primer partido REAL de
+    // 1 hora que pasó por el pipeline: con el intervalo fijo de 5s, cualquier video de más de
+    // 500s —columns*rows*intervalSeconds— ya generaba más de 100 frames y rompía esto; todos
+    // los videos usados hasta esa fecha habían sido demos/pruebas cortas, por eso no se había
+    // visto antes). Fix: el intervalo entre miniaturas se agranda dinámicamente según la
+    // duración real del video, para que SIEMPRE quepan en una sola grilla sin importar cuánto
+    // dure el partido. Para un video corto (menos de columns*rows*intervalSeconds) el
+    // comportamiento no cambia en nada respecto a antes.
+    const probeResult = await this.probe(inputPath);
+    const minInterval = opts.intervalSeconds ?? 5;
+    const interval = Math.max(minInterval, probeResult.durationSeconds / maxTiles);
 
     await execFileAsync('ffmpeg', [
       '-y',
@@ -134,8 +189,7 @@ export class FfmpegService {
       path.join(outputDir, spriteFile),
     ]);
 
-    const probeResult = await this.probe(inputPath);
-    const totalTiles = Math.min(columns * rows, Math.ceil(probeResult.durationSeconds / interval));
+    const totalTiles = Math.min(maxTiles, Math.ceil(probeResult.durationSeconds / interval));
     const vttLines = ['WEBVTT', ''];
     for (let i = 0; i < totalTiles; i++) {
       const start = i * interval;
@@ -152,6 +206,29 @@ export class FfmpegService {
     return { spriteFile, vttFile };
   }
 
+  /**
+   * Extrae un único frame como JPEG para usar de "poster" (miniatura de portada) en las
+   * tarjetas de partido — hasta ahora esas tarjetas mostraban un ícono genérico fijo (🎾/⚽)
+   * en vez de una imagen real del video (pedido del cliente, 2026-09-24).
+   *
+   * `atSeconds` por default apunta a los 3s: lo suficientemente adentro del video como para
+   * evitar frames negros/de transición del arranque de la grabación, pero sin acercarse a
+   * requerir conocer la duración total de antemano (evita un `probe()` extra solo para esto).
+   * Si el video dura menos que eso, FFmpeg simplemente devuelve el último frame disponible en
+   * vez de fallar.
+   */
+  async generatePoster(inputPath: string, outputPath: string, atSeconds = 3): Promise<void> {
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    await execFileAsync('ffmpeg', [
+      '-y',
+      '-ss', String(atSeconds),
+      '-i', inputPath,
+      '-frames:v', '1',
+      '-q:v', '3',
+      outputPath,
+    ]);
+  }
+
   private toVttTime(totalSeconds: number): string {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -163,6 +240,11 @@ export class FfmpegService {
    * Genera un clip independiente (mp4) a partir de un rango [startSeconds, endSeconds] del
    * video original, sin modificarlo (§16). Re-codifica (no `-c copy`) para garantizar un
    * corte preciso al frame solicitado en vez de saltar al keyframe más cercano.
+   *
+   * `-threads 1`: en la instancia chica de Render donde corre esto, dejar que libx264 use todos
+   * los cores disponibles (default) generó picos de CPU/memoria que llegaron a tirar abajo todo
+   * el proceso (ver nota en VideoProcessingProcessor) - un clip tarda un poco más así, pero no
+   * pone en riesgo al resto de la API mientras se genera.
    */
   async generateClip(inputPath: string, startSeconds: number, endSeconds: number, outputPath: string): Promise<void> {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
@@ -175,6 +257,7 @@ export class FfmpegService {
       '-c:v', 'libx264',
       '-c:a', 'aac',
       '-preset', 'veryfast',
+      '-threads', '1',
       outputPath,
     ]);
   }

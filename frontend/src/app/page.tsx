@@ -25,9 +25,9 @@ export default function LandingPage() {
       />
 
       <header className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
-        <div className="flex items-center gap-2">
-          <LogoMark className="h-9 w-9 shrink-0 shadow-glow" />
-          <span className="text-lg font-bold tracking-tight text-white">
+        <div className="flex items-center gap-3">
+          <LogoMark className="h-12 w-12 shrink-0 sm:h-14 sm:w-14" />
+          <span className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
             Live<span className="text-pitch-400">Play</span>
           </span>
         </div>
@@ -43,27 +43,45 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <section className="relative z-10 mx-auto flex max-w-4xl flex-col items-center px-6 pb-20 pt-16 text-center sm:pt-24">
-        <span className="badge border border-pitch-500/40 bg-pitch-500/10 text-pitch-400">Jugá. Grabá. Reviví.</span>
-        <h1 className="mt-6 text-4xl font-black tracking-tight text-white sm:text-6xl">
+      <section className="relative z-10 mx-auto flex max-w-4xl flex-col items-center px-6 pb-10 pt-10 text-center sm:pt-14">
+        <span
+          className="badge border border-pitch-500/40 bg-pitch-500/10 text-pitch-400"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.1s both' }}
+        >
+          Jugá. Grabá. Reviví.
+        </span>
+        <h1
+          className="mt-6 text-4xl font-black tracking-tight text-white sm:text-6xl"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.2s both' }}
+        >
           REVIVÍ <span className="text-pitch-400">CADA PARTIDO</span>
         </h1>
-        <p className="mt-5 max-w-xl text-balance text-lg text-ink-300">
+        <p
+          className="mt-5 max-w-xl text-balance text-lg text-ink-300"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.32s both' }}
+        >
           Guardamos tus partidos de Fútbol 5 y Pádel para que puedas volver a vivir cada jugada, desde el celular o la computadora.
         </p>
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-          <Link href="/login" className="btn-primary px-7 py-3 text-base">Iniciar sesión</Link>
+        <div
+          className="mt-8 flex flex-wrap items-center justify-center gap-4"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.44s both' }}
+        >
+          <a href="#buscar" className="btn-primary px-7 py-3 text-base">🔎 Buscar mi partido</a>
           <Link href="/register" className="btn-secondary px-7 py-3 text-base">Registrarme</Link>
         </div>
-        {/* Credenciales de la demo — quitar en producción */}
-        <p className="mt-4 text-xs text-ink-400">Demo: juan@demo.com · contraseña demo1234</p>
+        <p
+          className="mt-3 text-sm text-ink-400"
+          style={{ animation: 'lp-fade-up 0.5s ease-out 0.54s both' }}
+        >
+          <Link href="/login" className="underline hover:text-white">¿Ya tenés cuenta? Iniciá sesión</Link>
+        </p>
       </section>
 
       <section id="buscar" className="relative z-10 mx-auto max-w-4xl px-6 pb-20">
         <div className="mx-auto mb-8 max-w-2xl text-center">
           <h2 className="text-2xl font-bold text-white sm:text-3xl">Buscá tu partido, sin necesidad de cuenta</h2>
           <p className="mt-2 text-ink-300">
-            Elegí tu deporte, tu ciudad y la cancha donde jugaste — cada cancha tiene su propia cámara IP grabando. Para ver el video hace falta iniciar sesión y haber participado del partido.
+            Elegí tu deporte, tu ciudad y la cancha donde jugaste — cada cancha tiene su propia cámara IP grabando. Para grabar jugadas y descargarlas o compartirlas tenés que registrarte o iniciar sesión.
           </p>
         </div>
         <CourtExplorer />

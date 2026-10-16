@@ -9,6 +9,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import * as fs from 'fs';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { StorageDriver, PutObjectInput } from './storage.types';
 
 /**
@@ -60,6 +61,13 @@ export class S3StorageDriver implements StorageDriver {
     return null;
   }
 
+  // Streaming directo a disco: a diferencia de `getObjectAsBuffer`, nunca mantiene el objeto
+  // completo en memoria — crítico para el video original de un partido, que puede pesar varios GB.
+  async downloadToFile(key: string, destPath: string): Promise<void> {
+    const res = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    await pipeline(res.Body as Readable, fs.createWriteStream(destPath));
+  }
+
   async deleteObject(key: string): Promise<void> {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
@@ -74,16 +82,25 @@ export class S3StorageDriver implements StorageDriver {
   }
 
   async exists(key: string): Promise<boolean> {
+    console.log('EXISTS_ENTER key=' + key + ' bucket=' + this.bucket);
     try {
       await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
       return true;
-    } catch {
-      return false;
+    } catch (err: any) {
+      console.error('[S3StorageDriver.exists] HeadObject failed key=' + key, err?.name, err?.message, (err as any)?.Code, err?.$metadata?.httpStatusCode); return false;
     }
   }
 
   async getSignedReadUrl(key: string, expiresInSeconds: number): Promise<string> {
     const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+    return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
+  }
+
+  // Mismo mecanismo que getSignedReadUrl pero con PutObjectCommand: el dispositivo que recibe
+  // esta URL puede subir EXACTAMENTE esa key (con ESE Content-Type, fijado en la firma) y nada
+  // más — no es una credencial de bucket, no sirve para listar ni para tocar otras keys.
+  async getSignedPutUrl(key: string, contentType: string, expiresInSeconds: number): Promise<string> {
+    const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
 }

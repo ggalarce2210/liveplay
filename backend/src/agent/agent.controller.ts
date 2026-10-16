@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   NotFoundException,
@@ -15,6 +16,8 @@ import { Request } from 'express';
 import { AgentAuthGuard } from './agent-auth.guard';
 import { AgentService } from './agent.service';
 import { MatchesService } from '../matches/matches.service';
+import { CreateUploadPlanDto } from './dto/upload-plan.dto';
+import { FinalizeUploadDto } from './dto/finalize-upload.dto';
 
 /**
  * API que usa el agente local instalado en la red de cada complejo (ver backend/AGENTE.md) —
@@ -42,5 +45,26 @@ export class AgentController {
     const match = await this.agentService.assertMatchBelongsToCourt(id, camera.courtId);
     if (!match) throw new NotFoundException('Ese partido no pertenece a la cancha de este agente');
     return this.matchesService.attachVideo(id, file.path);
+  }
+
+  /**
+   * "Escenario B" (ver backend/AGENTE.md): el mini-PC ya corrió FFmpeg localmente y pide acá las
+   * URLs firmadas para subir directo a storage los archivos resultantes, sin pasar por el
+   * pipeline de `attachVideo`/`VideoProcessingService` de arriba. Ver AgentService.createUploadPlan.
+   */
+  @Post('matches/:id/upload-plan')
+  createUploadPlan(@Param('id') id: string, @Req() req: Request, @Body() dto: CreateUploadPlanDto) {
+    const camera = (req as any).agentCamera;
+    return this.agentService.createUploadPlan(id, camera.courtId, dto);
+  }
+
+  /**
+   * Llamado por el mini-PC después de haber subido con éxito todo lo que le dio `upload-plan`.
+   * Ver AgentService.finalizeDirectUpload.
+   */
+  @Post('matches/:id/finalize')
+  finalizeDirectUpload(@Param('id') id: string, @Req() req: Request, @Body() dto: FinalizeUploadDto) {
+    const camera = (req as any).agentCamera;
+    return this.agentService.finalizeDirectUpload(id, camera.courtId, dto);
   }
 }

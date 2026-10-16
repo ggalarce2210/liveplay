@@ -29,8 +29,12 @@ export default function MatchCard({ match }: { match: Match }) {
 
   return (
     <div className="card group flex flex-col overflow-hidden transition hover:border-pitch-500/50">
-      <div className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-ink-800 via-ink-800 to-ink-900">
-        <span className="text-4xl opacity-30">{match.sportType === 'FUTBOL5' ? '⚽' : '🎾'}</span>
+      <div
+        className="relative flex aspect-video items-center justify-center bg-gradient-to-br from-ink-800 via-ink-800 to-ink-900 bg-cover bg-center"
+        style={match.video?.posterUrl ? { backgroundImage: `url(${match.video.posterUrl})` } : undefined}
+      >
+        {/* Sin poster (todavía procesando, o no se pudo generar): ícono genérico como antes. */}
+        {!match.video?.posterUrl && <span className="text-4xl opacity-30">{match.sportType === 'FUTBOL5' ? '⚽' : '🎾'}</span>}
         <span className={`badge absolute left-3 top-3 ${status.className}`}>{status.label}</span>
         {match.video?.durationSeconds ? (
           <span className="badge absolute bottom-3 right-3 bg-black/60 text-white">{formatDuration(match.video.durationSeconds)}</span>

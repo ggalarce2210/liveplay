@@ -1,7 +1,7 @@
 /**
  * Isotipo de LIVEPLAY: insignia en degradé verde césped con un triángulo de "play" en blanco,
- * una línea de cancha sutil de fondo, y un punto ámbar tipo "REC/en vivo" — resume en un solo
- * ícono la idea de "video + deporte en vivo" sin depender de texto (§18, diseño premium/minimalista).
+ * un punto ámbar tipo REC/en vivo y una línea de cancha sutil de fondo — resume en un solo ícono
+ * la idea de "video + deporte en vivo" sin depender de texto (§18, diseño premium/minimalista).
  */
 export default function LogoMark({ className = 'h-8 w-8' }: { className?: string }) {
   return (
