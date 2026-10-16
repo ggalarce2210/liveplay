@@ -52,6 +52,16 @@ export const notificationTypeEnum = pgEnum('notification_type', ['MATCH_READY', 
 export const storageProviderEnum = pgEnum('storage_provider', ['LOCAL', 'S3']);
 export const subscriptionPlanEnum = pgEnum('subscription_plan', ['FREE', 'BASIC', 'PRO', 'ENTERPRISE']);
 export const subscriptionStatusEnum = pgEnum('subscription_status', ['ACTIVE', 'PAST_DUE', 'CANCELED', 'TRIALING']);
+/**
+ * Pase de acceso pagado a los videos de un complejo (ver `videoAccessPasses` más abajo).
+ * PENDING: se creó la preferencia de Mercado Pago, todavía no llegó confirmación de pago.
+ * APPROVED: el webhook confirmó el pago — mientras `expiresAt` no haya pasado, desbloquea.
+ * REJECTED: Mercado Pago rechazó/canceló el pago (tarjeta rechazada, el usuario abandonó, etc.).
+ * EXPIRED: no es un status que el webhook ponga — se calcula en el momento (expiresAt < now())
+ *   comparando contra `expiresAt`, queda acá solo para dejar un registro histórico explícito si
+ *   en el futuro corremos un job que los marque así (hoy no existe ese job).
+ */
+export const videoAccessPassStatusEnum = pgEnum('video_access_pass_status', ['PENDING', 'APPROVED', 'REJECTED', 'EXPIRED']);
 
 // ──────────────────────────────────────────────────────────────
 // USUARIOS Y AUTENTICACIÓN
@@ -101,9 +111,85 @@ export const complexes = pgTable('complexes', {
   timezone: text('timezone').notNull().default('America/Argentina/Buenos_Aires'),
   openingHours: jsonb('opening_hours'),
   logoUrl: text('logo_url'),
+  /**
+   * Pago por ver videos (2026-10-16): el dueño del complejo puede elegir cobrar por ver los
+   * partidos grabados. Cuando `chargesForVideoAccess` es true, `videoAccessPriceArs` y
+   * `videoAccessPassDays` tienen que estar cargados (lo valida ComplexesService.update, no una
+   * constraint de DB, para no tener que lidiar con CHECK constraints condicionales en Postgres).
+   * El pago desbloquea TODO el complejo (no un partido puntual) por `videoAccessPassDays` días
+   * desde que se acredita — ver `videoAccessPasses` más abajo y `MercadopagoService`.
+   */
+  chargesForVideoAccess: boolean('charges_for_video_access').notNull().default(false),
+  /** Precio del pase en pesos argentinos (ARS), con decimales (ej. 1500.50). Null si el
+   * complejo no cobra. */
+  videoAccessPriceArs: doublePrecision('video_access_price_ars'),
+  /** Cuántos días dura el pase una vez acreditado el pago. Null si el complejo no cobra. */
+  videoAccessPassDays: integer('video_access_pass_days'),
   ...timestamps,
 }, (t) => ({
   cityIdx: index('complexes_city_idx').on(t.city),
+}));
+
+/**
+ * Credenciales OAuth de la cuenta de Mercado Pago DEL PROPIO COMPLEJO (modelo marketplace: la
+ * plata del pago entra directo a esta cuenta, no a una cuenta central de LivePlay — ver
+ * MercadopagoService.createPreference, que usa `accessToken` de ACÁ, no uno global, y manda
+ * `marketplace_fee` para que LivePlay se quede con su comisión al vuelo). Tabla separada de
+ * `complexes` a propósito: `GET /complexes/:id` es público (buscador de complejos) y nunca
+ * tiene que poder filtrar un access_token/refresh_token en esa respuesta — esta tabla no tiene
+ * relación Drizzle agregada a `complexesRelations` para que nadie la traiga sin querer con un
+ * `with: {...}` genérico; se consulta siempre explícita y solo desde MercadopagoService.
+ */
+export const complexMercadoPagoAccounts = pgTable('complex_mercadopago_accounts', {
+  id: id(),
+  complexId: uuid('complex_id').notNull().unique().references(() => complexes.id, { onDelete: 'cascade' }),
+  /** "collector_id" / user_id del vendedor en Mercado Pago — identifica la cuenta conectada. */
+  mpUserId: text('mp_user_id').notNull(),
+  accessToken: text('access_token').notNull(),
+  refreshToken: text('refresh_token').notNull(),
+  publicKey: text('public_key'),
+  /** Cuándo vence `accessToken` — MercadopagoService lo renueva solo (con `refreshToken`) antes
+   * de que esto llegue, nunca esperamos a que falle un pago por un token vencido. */
+  tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }).notNull(),
+  connectedAt: timestamp('connected_at', { withTimezone: true }).defaultNow().notNull(),
+  ...timestamps,
+});
+
+/**
+ * Un pase de acceso a los videos de un complejo, comprado por un usuario puntual (decisión
+ * 2026-10-16: el pago desbloquea TODO el complejo por `passDaysSnapshot` días, no un partido
+ * individual — ver comentario en `complexes.videoAccessPassDays`). Queda ligado a la cuenta que
+ * pagó (no es un link compartible): VideosService.getAuthorized exige un pase propio con
+ * `status = 'APPROVED'` y `expiresAt > now()` para ese `(complexId, userId)`.
+ *
+ * `amountArs`/`passDaysSnapshot` quedan copiados del precio/duración configurados en el
+ * complejo AL MOMENTO DE LA COMPRA — si el admin cambia el precio o la duración del pase
+ * después, no debe afectar pases ya comprados (ni retroactivamente cobrar de más, ni acortar un
+ * pase ya vigente).
+ */
+export const videoAccessPasses = pgTable('video_access_passes', {
+  id: id(),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  status: videoAccessPassStatusEnum('status').notNull().default('PENDING'),
+  amountArs: doublePrecision('amount_ars').notNull(),
+  passDaysSnapshot: integer('pass_days_snapshot').notNull(),
+  /** Token único que viaja como `external_reference` en la preferencia de Mercado Pago — es
+   * como el webhook (que solo trae un payment id de Mercado Pago) encuentra de vuelta ESTA
+   * fila sin ambigüedad. */
+  externalReference: text('external_reference').notNull().unique(),
+  mpPreferenceId: text('mp_preference_id'),
+  /** Null hasta que el webhook confirma el pago — ahí sí es el id de pago real de Mercado Pago,
+   * único (nunca procesamos el mismo pago dos veces aunque el webhook llegue duplicado). */
+  mpPaymentId: text('mp_payment_id').unique(),
+  /** Cuándo se acreditó el pago (status pasó a APPROVED). Null en PENDING/REJECTED. */
+  purchasedAt: timestamp('purchased_at', { withTimezone: true }),
+  /** purchasedAt + passDaysSnapshot días. Null hasta que se acredita. */
+  expiresAt: timestamp('expires_at', { withTimezone: true }),
+  ...timestamps,
+}, (t) => ({
+  complexUserIdx: index('video_access_passes_complex_user_idx').on(t.complexId, t.userId),
+  externalRefIdx: index('video_access_passes_external_ref_idx').on(t.externalReference),
 }));
 
 export const courts = pgTable('courts', {
@@ -390,12 +476,25 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   matchPlayers: many(matchPlayers),
   bookmarks: many(bookmarks),
   clips: many(clips),
+  videoAccessPasses: many(videoAccessPasses),
 }));
 
 export const complexesRelations = relations(complexes, ({ many, one }) => ({
   courts: many(courts),
   matches: many(matches),
   subscription: one(subscriptions, { fields: [complexes.id], references: [subscriptions.complexId] }),
+  // OJO: a propósito NO hay una relación `mercadoPagoAccount` acá — ver el comentario grande en
+  // `complexMercadoPagoAccounts` sobre por qué esa tabla se consulta siempre explícita.
+  videoAccessPasses: many(videoAccessPasses),
+}));
+
+export const complexMercadoPagoAccountsRelations = relations(complexMercadoPagoAccounts, ({ one }) => ({
+  complex: one(complexes, { fields: [complexMercadoPagoAccounts.complexId], references: [complexes.id] }),
+}));
+
+export const videoAccessPassesRelations = relations(videoAccessPasses, ({ one }) => ({
+  complex: one(complexes, { fields: [videoAccessPasses.complexId], references: [complexes.id] }),
+  user: one(users, { fields: [videoAccessPasses.userId], references: [users.id] }),
 }));
 
 export const courtsRelations = relations(courts, ({ one, many }) => ({

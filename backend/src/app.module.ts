@@ -25,6 +25,7 @@ import { ClipsModule } from './clips/clips.module';
 import { ShareModule } from './share/share.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AdminModule } from './admin/admin.module';
+import { PaymentsModule } from './payments/payments.module';
 import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor';
 
 @Module({
@@ -52,6 +53,7 @@ import { AuditLogInterceptor } from './common/interceptors/audit-log.interceptor
     ShareModule,
     NotificationsModule,
     AdminModule,
+    PaymentsModule,
   ],
   controllers: [StreamController, AgentUploadController],
   providers: [

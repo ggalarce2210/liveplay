@@ -24,6 +24,18 @@ export interface Complex {
   city?: string | null;
   timezone?: string;
   courts?: Court[];
+  /** Pago por ver videos (ver backend/src/payments) — null en priceArs/passDays mientras
+   * chargesForVideoAccess es false. */
+  chargesForVideoAccess?: boolean;
+  videoAccessPriceArs?: number | null;
+  videoAccessPassDays?: number | null;
+}
+
+/** Estado de conexión de la cuenta de Mercado Pago del complejo (GET .../mercadopago/status). */
+export interface MercadoPagoConnectionStatus {
+  connected: boolean;
+  mpUserId: string | null;
+  connectedAt: string | null;
 }
 
 /** Horario fijo de turnos de una cancha — ver `MatchSchedulerService` en el backend. */
@@ -178,10 +190,14 @@ export interface Clip {
 }
 
 export interface PlaybackUrls {
-  status: VideoStatus;
+  status: VideoStatus | 'PAYMENT_REQUIRED';
   manifestUrl: string | null;
   thumbnailsVttUrl: string | null;
   durationSeconds?: number;
   width?: number;
   height?: number;
+  /** Solo cuando status === 'PAYMENT_REQUIRED' (ver VideosService.checkPaywall). */
+  complexId?: string;
+  priceArs?: number | null;
+  passDays?: number | null;
 }

@@ -6,6 +6,8 @@ import { StreamTokenService } from '../storage/stream-token.service';
 import { STORAGE_DRIVER } from '../storage/storage.module';
 import { StorageDriver } from '../storage/storage.types';
 import { AuthUser } from '../common/decorators/current-user.decorator';
+import { Role } from '../common/roles';
+import { VideoAccessService } from '../payments/video-access.service';
 
 const MANIFEST_URL_TTL_SECONDS = 60 * 60 * 4; // 4hs: suficiente para ver el partido completo
 
@@ -14,6 +16,7 @@ export class VideosService {
   constructor(
     private dbService: DbService,
     private streamTokens: StreamTokenService,
+    private videoAccess: VideoAccessService,
     @Inject(STORAGE_DRIVER) private storage: StorageDriver,
   ) {}
   private get db() {
@@ -24,7 +27,7 @@ export class VideosService {
     const video = await this.db.query.videos.findFirst({
       where: eq(videos.id, id),
       with: {
-        match: { with: { players: true } },
+        match: { with: { players: true, complex: true } },
         segments: { orderBy: (s, { asc }) => [asc(s.index)] },
       },
     });
@@ -37,6 +40,27 @@ export class VideosService {
     // Decisión del cliente: cualquier usuario logueado puede ver cualquier turno grabado, mismo
     // criterio para los tres roles.
     return video;
+  }
+
+  /**
+   * Pago por ver videos (2026-10-16): si el complejo del partido cobra por ver sus videos,
+   * SUPER_ADMIN/COMPLEX_ADMIN siguen viendo todo sin pagar (son quienes administran el
+   * complejo, no "clientes" del paywall) — solo a un PLAYER se le exige un pase vigente.
+   */
+  private async checkPaywall(video: Awaited<ReturnType<VideosService['getAuthorized']>>, requester: AuthUser) {
+    const complex = video.match?.complex;
+    if (!complex?.chargesForVideoAccess) return { blocked: false as const };
+    if (requester.role !== Role.PLAYER) return { blocked: false as const };
+
+    const hasAccess = await this.videoAccess.hasActivePass(complex.id, requester.userId);
+    if (hasAccess) return { blocked: false as const };
+
+    return {
+      blocked: true as const,
+      complexId: complex.id,
+      priceArs: complex.videoAccessPriceArs,
+      passDays: complex.videoAccessPassDays,
+    };
   }
 
   async get(id: string, requester: AuthUser) {
@@ -60,6 +84,19 @@ export class VideosService {
     if (video.status !== 'READY' || !video.hlsManifestKey) {
       return { status: video.status, manifestUrl: null, thumbnailsVttUrl: null };
     }
+
+    const paywall = await this.checkPaywall(video, requester);
+    if (paywall.blocked) {
+      return {
+        status: 'PAYMENT_REQUIRED' as const,
+        manifestUrl: null,
+        thumbnailsVttUrl: null,
+        complexId: paywall.complexId,
+        priceArs: paywall.priceArs,
+        passDays: paywall.passDays,
+      };
+    }
+
     const manifestUrl = this.streamTokens.sign(video.hlsManifestKey, MANIFEST_URL_TTL_SECONDS);
     const thumbnailsVttUrl = video.thumbnailVttKey
       ? this.streamTokens.sign(video.thumbnailVttKey, MANIFEST_URL_TTL_SECONDS)

@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import AuthGuard from '@/components/AuthGuard';
 import AppShell from '@/components/AppShell';
+import { useSearchParams } from 'next/navigation';
 import { api, ApiError } from '@/lib/api';
-import type { Complex, Court, Camera, ImouDevice, SportType, CameraType, CourtOperatingHours } from '@/types';
+import type { Complex, Court, Camera, ImouDevice, SportType, CameraType, CourtOperatingHours, MercadoPagoConnectionStatus } from '@/types';
 
 const SPORT_LABELS: Record<SportType, string> = { FUTBOL5: 'Fútbol 5', PADEL: 'Pádel' };
 /** Duración de turno sugerida por defecto según el deporte — el encargado la puede cambiar. */
@@ -214,19 +215,23 @@ export default function CanchasAdminPage() {
                       </div>
                     </div>
                     {deleteComplexError && <p className="mt-2 text-xs text-red-400">{deleteComplexError}</p>}
-
-                    {showNewCourt && (
-                      <div className="mt-4 border-t border-ink-800 pt-4">
-                        <NewCourtForm
-                          complexId={selectedComplex.id}
-                          onCreated={async () => {
-                            setShowNewCourt(false);
-                            await loadCourts(selectedComplex.id);
-                          }}
-                        />
-                      </div>
-                    )}
                   </div>
+
+                  <Suspense fallback={null}>
+                    <VideoAccessSettingsCard complex={selectedComplex} onChanged={loadComplexes} />
+                  </Suspense>
+
+                  {showNewCourt && (
+                    <div className="card p-5">
+                      <NewCourtForm
+                        complexId={selectedComplex.id}
+                        onCreated={async () => {
+                          setShowNewCourt(false);
+                          await loadCourts(selectedComplex.id);
+                        }}
+                      />
+                    </div>
+                  )}
 
                   {courtsError && <div className="card border-red-500/30 p-4 text-sm text-red-400">{courtsError}</div>}
 
@@ -251,6 +256,179 @@ export default function CanchasAdminPage() {
         </div>
       </AppShell>
     </AuthGuard>
+  );
+}
+
+/**
+ * Cobro por ver videos (2026-10-16): toggle + precio/días de pase (guardan en `complexes` vía
+ * PATCH normal) + conexión de la cuenta de Mercado Pago DEL PROPIO COMPLEJO (modelo
+ * marketplace: la plata entra directo ahí, LivePlay se queda con una comisión — ver
+ * backend/src/payments/mercadopago.service.ts). Sin la cuenta conectada, el cobro no funciona
+ * aunque el toggle esté prendido: el checkout del lado del jugador fallaría, así que se lo
+ * avisamos acá mismo al encargado.
+ */
+function VideoAccessSettingsCard({ complex, onChanged }: { complex: Complex | null; onChanged: () => void }) {
+  const searchParams = useSearchParams();
+  const mpRedirectStatus = searchParams.get('mp'); // 'connected' | 'error' | null, viene del callback OAuth
+
+  const [charges, setCharges] = useState(false);
+  const [priceArs, setPriceArs] = useState('');
+  const [passDays, setPassDays] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveOk, setSaveOk] = useState(false);
+
+  const [mpStatus, setMpStatus] = useState<MercadoPagoConnectionStatus | null>(null);
+  const [mpLoading, setMpLoading] = useState(false);
+  const [mpError, setMpError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setCharges(complex?.chargesForVideoAccess ?? false);
+    setPriceArs(complex?.videoAccessPriceArs != null ? String(complex.videoAccessPriceArs) : '');
+    setPassDays(complex?.videoAccessPassDays != null ? String(complex.videoAccessPassDays) : '');
+    setSaveOk(false);
+    setSaveError(null);
+  }, [complex?.id, complex?.chargesForVideoAccess, complex?.videoAccessPriceArs, complex?.videoAccessPassDays]);
+
+  useEffect(() => {
+    if (!complex?.id) return;
+    setMpStatus(null);
+    setMpError(null);
+    api
+      .get<MercadoPagoConnectionStatus>(`/complexes/${complex.id}/mercadopago/status`)
+      .then(setMpStatus)
+      .catch((err) => setMpError(errorMessage(err, 'No pudimos consultar el estado de Mercado Pago')));
+  }, [complex?.id, mpRedirectStatus]);
+
+  if (!complex) return null;
+
+  async function onSave(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setSaveError(null);
+    setSaveOk(false);
+    try {
+      await api.patch(`/complexes/${complex!.id}`, {
+        chargesForVideoAccess: charges,
+        videoAccessPriceArs: charges ? Number(priceArs) : null,
+        videoAccessPassDays: charges ? Number(passDays) : null,
+      });
+      setSaveOk(true);
+      onChanged();
+    } catch (err) {
+      setSaveError(errorMessage(err, 'No pudimos guardar la configuración de cobro'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onConnectMercadoPago() {
+    setMpLoading(true);
+    setMpError(null);
+    try {
+      const { url } = await api.get<{ url: string }>(`/complexes/${complex!.id}/mercadopago/connect-url`);
+      window.location.href = url;
+    } catch (err) {
+      setMpError(errorMessage(err, 'No pudimos iniciar la conexión con Mercado Pago'));
+      setMpLoading(false);
+    }
+  }
+
+  async function onDisconnectMercadoPago() {
+    if (!window.confirm('¿Desconectar la cuenta de Mercado Pago de este complejo? Mientras no se vuelva a conectar, no se van a poder cobrar nuevos pases.')) return;
+    setMpLoading(true);
+    setMpError(null);
+    try {
+      await api.delete(`/complexes/${complex!.id}/mercadopago`);
+      setMpStatus({ connected: false, mpUserId: null, connectedAt: null });
+    } catch (err) {
+      setMpError(errorMessage(err, 'No pudimos desconectar Mercado Pago'));
+    } finally {
+      setMpLoading(false);
+    }
+  }
+
+  return (
+    <div className="card space-y-4 p-5">
+      <h3 className="text-sm font-semibold uppercase tracking-wide text-ink-300">Cobro por ver videos</h3>
+
+      {mpRedirectStatus === 'connected' && (
+        <p className="rounded-lg border border-pitch-500/40 bg-pitch-500/10 px-3 py-2 text-xs text-pitch-300">
+          ✅ Cuenta de Mercado Pago conectada.
+        </p>
+      )}
+      {mpRedirectStatus === 'error' && (
+        <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+          No se pudo completar la conexión con Mercado Pago. Probá de nuevo.
+        </p>
+      )}
+
+      <form onSubmit={onSave} className="space-y-3">
+        <label className="flex items-center gap-2 text-sm text-ink-200">
+          <input type="checkbox" checked={charges} onChange={(e) => setCharges(e.target.checked)} />
+          Este complejo cobra por ver los videos de sus partidos
+        </label>
+
+        {charges && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs text-ink-400">
+              Precio del pase (ARS)
+              <input
+                required
+                type="number"
+                min={1}
+                step="0.01"
+                className="input-field mt-1"
+                value={priceArs}
+                onChange={(e) => setPriceArs(e.target.value)}
+              />
+            </label>
+            <label className="text-xs text-ink-400">
+              Duración del pase (días)
+              <input
+                required
+                type="number"
+                min={1}
+                step="1"
+                className="input-field mt-1"
+                value={passDays}
+                onChange={(e) => setPassDays(e.target.value)}
+              />
+            </label>
+          </div>
+        )}
+
+        {saveError && <p className="text-xs text-red-400">{saveError}</p>}
+        {saveOk && <p className="text-xs text-pitch-400">Guardado.</p>}
+        <button type="submit" disabled={saving} className="btn-secondary !py-1.5 text-xs">
+          {saving ? 'Guardando...' : 'Guardar'}
+        </button>
+      </form>
+
+      {charges && (
+        <div className="border-t border-ink-800 pt-3">
+          <p className="mb-2 text-xs text-ink-400">
+            La plata de cada pase entra directo a la cuenta de Mercado Pago de este complejo (no a una cuenta de LivePlay) — hace falta
+            conectarla una vez.
+          </p>
+          {mpError && <p className="mb-2 text-xs text-red-400">{mpError}</p>}
+          {!mpStatus ? (
+            <p className="text-xs text-ink-400">Consultando estado de Mercado Pago...</p>
+          ) : mpStatus.connected ? (
+            <div className="flex items-center justify-between">
+              <span className="badge bg-pitch-500/15 text-pitch-400">🟢 Mercado Pago conectado</span>
+              <button className="text-xs font-semibold text-red-400 hover:text-red-300 disabled:opacity-60" onClick={onDisconnectMercadoPago} disabled={mpLoading}>
+                {mpLoading ? 'Desconectando...' : 'Desconectar'}
+              </button>
+            </div>
+          ) : (
+            <button className="btn-primary !py-1.5 text-xs" onClick={onConnectMercadoPago} disabled={mpLoading}>
+              {mpLoading ? 'Redirigiendo...' : 'Conectar Mercado Pago'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

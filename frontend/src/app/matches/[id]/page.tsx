@@ -47,6 +47,27 @@ export default function MatchDetailPage() {
 
   const [shareUrl, setShareUrl] = useState<string | null>(null);
 
+  const [buyingAccess, setBuyingAccess] = useState(false);
+  const [buyAccessError, setBuyAccessError] = useState<string | null>(null);
+
+  /** Pago por ver videos: redirige al checkout de Mercado Pago de la cuenta DEL COMPLEJO (ver
+   * backend/src/payments). Al volver (success/pending/failure) el back_url apunta de nuevo acá
+   * mismo — si ya se acreditó, el próximo `load()` va a traer el manifestUrl real. */
+  async function onBuyAccess() {
+    if (!playback?.complexId) return;
+    setBuyingAccess(true);
+    setBuyAccessError(null);
+    try {
+      const { initPoint } = await api.post<{ initPoint: string }>(`/complexes/${playback.complexId}/video-access/checkout`, {
+        matchId: params.id,
+      });
+      window.location.href = initPoint;
+    } catch (err) {
+      setBuyAccessError(err instanceof ApiError ? err.message : 'No pudimos iniciar el pago');
+      setBuyingAccess(false);
+    }
+  }
+
   async function load() {
     try {
       const m = await api.get<Match>(`/matches/${params.id}`);
@@ -227,6 +248,20 @@ export default function MatchDetailPage() {
                 bookmarks={bookmarks}
                 onCreateBookmark={createBookmark}
               />
+            ) : playback?.status === 'PAYMENT_REQUIRED' ? (
+              <div className="card flex aspect-video flex-col items-center justify-center gap-3 px-6 text-center">
+                <p className="text-white">🔒 Este complejo cobra por ver sus videos</p>
+                {playback.priceArs != null && playback.passDays != null && (
+                  <p className="text-sm text-ink-400">
+                    ${playback.priceArs.toLocaleString('es-AR')} ARS · acceso por {playback.passDays} día{playback.passDays === 1 ? '' : 's'} a
+                    todos los videos del complejo
+                  </p>
+                )}
+                {buyAccessError && <p className="text-xs text-red-400">{buyAccessError}</p>}
+                <button className="btn-primary" onClick={onBuyAccess} disabled={buyingAccess}>
+                  {buyingAccess ? 'Redirigiendo a Mercado Pago...' : 'Pagar para ver'}
+                </button>
+              </div>
             ) : (
               <div className="card flex aspect-video items-center justify-center">
                 <p className="text-ink-400">
