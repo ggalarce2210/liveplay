@@ -67,4 +67,15 @@ export class AgentController {
     const camera = (req as any).agentCamera;
     return this.agentService.finalizeDirectUpload(id, camera.courtId, dto);
   }
+
+  /**
+   * Llamado por el agente local cuando su chequeo de movimiento (ver backend/AGENTE.md,
+   * "Chequeo de movimiento") no detecta actividad real en el horario del partido — ver
+   * AgentService.markEmpty.
+   */
+  @Post('matches/:id/mark-empty')
+  markEmpty(@Param('id') id: string, @Req() req: Request, @Body() dto: { reason?: string; mafd?: number }) {
+    const camera = (req as any).agentCamera;
+    return this.agentService.markEmpty(id, camera.courtId, dto);
+  }
 }
