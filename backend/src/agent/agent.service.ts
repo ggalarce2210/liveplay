@@ -56,6 +56,13 @@ export class AgentService {
     const ended = candidates.filter((m) => (m.endTime ? m.endTime <= now : m.startTime <= assumedEndCutoff));
 
     return ended
+      // `matches.status === 'FAILED'` es "no reintentar más" a nivel de partido — mismo
+      // significado que ya usa el pipeline legacy (`video-processing.service.ts`/
+      // `.processor.ts`) cuando se agotan los reintentos, y lo que se usa para "resetear" a
+      // mano partidos viejos sin grabación recuperable (ver nota 2026-10-20 en el resumen del
+      // proyecto: sin esto, un video FAILED igual vuelve a aparecer como pendiente para
+      // siempre, porque `video.status === 'FAILED'` abajo significa "reintentar", no "rendirse").
+      .filter((m) => m.status !== 'FAILED')
       .filter((m) => !m.video || m.video.status === 'FAILED')
       .map((m) => ({
         id: m.id,
