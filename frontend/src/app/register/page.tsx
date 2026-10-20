@@ -13,6 +13,7 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [devVerifyUrl, setDevVerifyUrl] = useState<string | null>(null);
   const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
+  const [emailDeliveryFailed, setEmailDeliveryFailed] = useState(false);
 
   function update<K extends keyof typeof form>(key: K, value: string) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -27,6 +28,7 @@ export default function RegisterPage() {
       // Ya no queda logueado: el backend exige confirmar el email antes de poder entrar.
       setRegisteredEmail(res.user.email);
       setDevVerifyUrl(res.devVerifyUrl ?? null);
+      setEmailDeliveryFailed(!!res.emailDeliveryFailed);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No pudimos crear tu cuenta');
     } finally {
@@ -45,10 +47,18 @@ export default function RegisterPage() {
           <div className="card p-6">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-pitch-500/15 text-2xl">📩</div>
             <h1 className="text-lg font-bold text-white">¡Ya casi! Confirmá tu cuenta</h1>
-            <p className="mt-2 text-sm text-ink-300">
-              Te enviamos un email a <span className="font-semibold text-white">{registeredEmail}</span>. Hacé click en el link para
-              activar tu cuenta — recién ahí vas a poder iniciar sesión.
-            </p>
+            {emailDeliveryFailed ? (
+              <p className="mt-2 text-sm text-ink-300">
+                Tu cuenta se creó, pero no pudimos enviarte el email de confirmación a{' '}
+                <span className="font-semibold text-white">{registeredEmail}</span> por un problema con nuestro proveedor de
+                correo. Escribinos para que te activemos la cuenta a mano mientras lo resolvemos.
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-ink-300">
+                Te enviamos un email a <span className="font-semibold text-white">{registeredEmail}</span>. Hacé click en el link para
+                activar tu cuenta — recién ahí vas a poder iniciar sesión.
+              </p>
+            )}
             {devVerifyUrl && (
               <div className="mt-4 rounded-lg border border-pitch-500/30 bg-pitch-500/10 p-3 text-xs text-ink-300">
                 <p className="mb-1 font-semibold text-pitch-400">Modo demo — no hay SMTP configurado</p>
