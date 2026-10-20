@@ -71,6 +71,38 @@ def load_config(required: list[str] | None = None) -> dict:
     cfg.setdefault("POLL_SECONDS", "120")
     cfg.setdefault("BUFFER_MINUTES", "15")
     cfg.setdefault("SAF_BACKUP_DIR_URI", "")  # opcional: respaldo a SD vía Termux SAF, ver config.example.env
+    # Solo lo usa uploader_direct.py (Escenario B): cuántas subidas a storage corren en
+    # paralelo. Bug real encontrado el 2026-10-15: con un partido de ~600 segmentos subidos de
+    # a uno (un curl nuevo, con su propio handshake TLS, por archivo), el tiempo total quedaba
+    # dominado por ese costo fijo repetido cientos de veces y no por el ancho de banda real de
+    # subida — un partido de 1h tardaba 30-50 min en subirse. Subir varios archivos a la vez
+    # amortiza ese costo fijo. 8 es conservador (no satura una conexión residencial típica);
+    # subible por config.env si hace falta más.
+    cfg.setdefault("MAX_CONCURRENT_UPLOADS", "8")
+    # Chequeo de movimiento (agregado 2026-10-20, ver nota en el resumen del proyecto): hoy
+    # LivePlay genera un partido "placeholder" por cada hora de funcionamiento de la cancha,
+    # haya o no reserva real en el sistema de turnos del complejo (CanchaYa en el caso de "Los
+    # Pinos", que no tiene API/integración disponible) — la mayoría de esas horas la cancha está
+    # vacía, y procesar/subir un video de eso es tiempo y ancho de banda tirados. En vez de
+    # integrar con CanchaYa (frágil, requeriría scraping de su web logueada), se mide actividad
+    # directo sobre la grabación propia: ver `measure_motion` más abajo.
+    #   - "off": no chequea nada, comportamiento de siempre.
+    #   - "dry_run" (default): mide y loguea el resultado, pero SIGUE subiendo el partido igual
+    #     — pensado para calibrar MOTION_CHECK_MAFD_THRESHOLD con partidos reales antes de
+    #     confiar en que esto no se coma un partido de verdad.
+    #   - "enforce": si no detecta movimiento, llama a POST /agent/matches/:id/mark-empty en vez
+    #     de armar el HLS completo y subirlo.
+    cfg.setdefault("MOTION_CHECK_MODE", "dry_run")
+    # A cuántos segundos del arranque del partido se toma la muestra, y cuánto dura esa muestra
+    # — no hace falta chequear el partido entero (sería tan caro como procesarlo), alcanza con
+    # una ventana corta bien adentro del horario (evita los primeros minutos, por si la gente
+    # tarda en llegar/acomodarse).
+    cfg.setdefault("MOTION_CHECK_OFFSET_SECONDS", "600")  # 10 min
+    cfg.setdefault("MOTION_CHECK_DURATION_SECONDS", "300")  # 5 min
+    # Punto de partida razonable, NO calibrado todavía con grabaciones reales de una cancha en
+    # uso — se ajusta mirando los valores de MAFD que loguea el modo "dry_run" con partidos
+    # reales (ver AGENTE.md, sección "Chequeo de movimiento").
+    cfg.setdefault("MOTION_CHECK_MAFD_THRESHOLD", "2.0")
     return cfg
 
 
@@ -91,9 +123,21 @@ def run(cmd: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True)
 
 
+# Bug real encontrado el 2026-10-16: ninguna llamada a curl tenía timeout — subprocess.run()
+# en run() de arriba espera indefinidamente. Con una conexión que no cierra bien (típico en
+# redes residenciales/WiFi), UNA sola llamada colgada deja process_once() esperando para
+# siempre esa llamada puntual, y como todo corre secuencialmente esto bloquea TODO lo que
+# viene después — no solo ese partido: un partido (21hs) quedó "colgado" subiendo y los
+# siguientes (22hs, 23hs) nunca llegaron ni a intentarse. Estos flags convierten un cuelgue de
+# red en un error normal (curl devuelve el exit code 28 y run() ya lo trata como falla
+# reintentable), nunca en un bloqueo eterno.
+CURL_API_TIMEOUT_ARGS = ["--connect-timeout", "10", "--max-time", "30"]
+CURL_UPLOAD_TIMEOUT_ARGS = ["--connect-timeout", "10", "--max-time", "180"]
+
+
 def fetch_pending_matches(cfg: dict) -> list[dict]:
     url = f"{cfg['LIVEPLAY_API_BASE']}/agent/matches/pending?bufferMinutes={cfg['BUFFER_MINUTES']}"
-    result = run(["curl", "-sS", "-H", f"X-Agent-Key: {cfg['AGENT_KEY']}", url])
+    result = run(["curl", "-sS", *CURL_API_TIMEOUT_ARGS, "-H", f"X-Agent-Key: {cfg['AGENT_KEY']}", url])
     if result.returncode != 0:
         log("agent", f"No se pudo consultar /agent/matches/pending: {result.stderr.strip()}")
         return []
@@ -191,6 +235,34 @@ def build_clip(
         return None
 
     return trimmed
+
+
+MAFD_RE = re.compile(r"lavfi\.signalstats\.MAFD=([\d.]+)")
+
+
+def measure_motion(clip_path: Path, offset_seconds: float, duration_seconds: float) -> float | None:
+    """Mide actividad/movimiento en una ventana de un clip ya recortado, usando el "Mean
+    Absolute Frame Difference" (MAFD) que calcula el filtro `signalstats` de FFmpeg — un número
+    que crece cuanto más cambia la imagen de un frame al siguiente. Una cancha vacía da un MAFD
+    bajo y estable (ruido de la cámara, cambios de luz); gente jugando genera cambios grandes y
+    sostenidos. Devuelve el promedio de MAFD en la ventana, o None si no se pudo medir (clip más
+    corto que offset+duration, o error de FFmpeg).
+
+    Deliberadamente NO es "IA"/machine learning — es un filtro de FFmpeg que ya usamos en todos
+    lados en este mismo archivo, corriendo acá en el mini-PC antes de gastar tiempo armando el
+    HLS completo y subiéndolo para una hora en la que la cancha estuvo vacía (ver
+    MOTION_CHECK_MODE en load_config, y AGENTE.md sección "Chequeo de movimiento").
+    """
+    cmd = [
+        "ffmpeg", "-ss", str(offset_seconds), "-t", str(duration_seconds), "-i", str(clip_path),
+        "-vf", "signalstats,metadata=print:key=lavfi.signalstats.MAFD:file=-",
+        "-f", "null", "-",
+    ]
+    result = run(cmd)
+    values = [float(m) for m in MAFD_RE.findall(result.stdout)]
+    if not values:
+        return None
+    return sum(values) / len(values)
 
 
 def cleanup_old_segments(recordings_dir: Path, retention_hours: float) -> None:
