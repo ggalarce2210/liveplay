@@ -41,11 +41,15 @@ from __future__ import annotations
 import json
 import math
 import shutil
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
 from agent_lib import (
+    CURL_API_TIMEOUT_ARGS,
+    CURL_UPLOAD_TIMEOUT_ARGS,
     build_clip,
     cleanup_old_segments,
     cleanup_stale_tmp_files,
@@ -53,6 +57,7 @@ from agent_lib import (
     list_segments,
     load_config,
     log,
+    measure_motion,
     parse_iso,
     run,
     segments_for_window,
@@ -240,7 +245,7 @@ def _curl_json(cfg: dict, method: str, path: str, payload: dict) -> dict:
     url = f"{cfg['LIVEPLAY_API_BASE']}{path}"
     body = json.dumps(payload)
     result = run([
-        "curl", "-sS", "-o", "-", "-w", "\n%{http_code}",
+        "curl", "-sS", *CURL_API_TIMEOUT_ARGS, "-o", "-", "-w", "\n%{http_code}",
         "-X", method,
         "-H", f"X-Agent-Key: {cfg['AGENT_KEY']}",
         "-H", "Content-Type: application/json",
@@ -272,7 +277,7 @@ def request_upload_plan(cfg: dict, match_id: str, relative_paths: list[str]) -> 
 
 def put_file(url: str, local_path: Path, content_type: str) -> None:
     result = run([
-        "curl", "-sS", "-o", "-", "-w", "\n%{http_code}",
+        "curl", "-sS", *CURL_UPLOAD_TIMEOUT_ARGS, "-o", "-", "-w", "\n%{http_code}",
         "-T", str(local_path),
         "-H", f"Content-Type: {content_type}",
         "-H", "Expect:",  # evita el "100-continue" de curl en archivos grandes — algunos
@@ -290,6 +295,49 @@ def put_file(url: str, local_path: Path, content_type: str) -> None:
 def request_finalize(cfg: dict, match_id: str, payload: dict) -> dict:
     """POST /agent/matches/:id/finalize — ver AgentService.finalizeDirectUpload."""
     return _curl_json(cfg, "POST", f"/agent/matches/{match_id}/finalize", payload)
+
+
+def mark_match_empty(cfg: dict, match_id: str, mafd: float | None) -> dict:
+    """POST /agent/matches/:id/mark-empty — ver AgentService.markEmpty. Se llama cuando el
+    chequeo de movimiento (ver check_motion_for_match / agent_lib.measure_motion) no detectó
+    actividad real en la ventana del partido — evita gastar FFmpeg/ancho de banda armando y
+    subiendo el video de una cancha que estuvo vacía esa hora."""
+    payload = {"reason": "no_motion_detected", "mafd": mafd}
+    return _curl_json(cfg, "POST", f"/agent/matches/{match_id}/mark-empty", payload)
+
+
+# ──────────────────────────────────────────────────────────────
+# Chequeo de movimiento (ver MOTION_CHECK_MODE en agent_lib.load_config y AGENTE.md)
+# ──────────────────────────────────────────────────────────────
+
+def check_motion_for_match(
+    cfg: dict, covering, window_start, window_end, tmp_dir: Path, match_id: str
+) -> tuple[float | None, str]:
+    """Arma un clip CORTO (no el partido entero) centrado en una ventana bien adentro del
+    horario del partido y mide actividad ahí — mucho más barato que procesar/subir todo para
+    después descubrir que la cancha estuvo vacía. Devuelve (mafd, decisión), donde decisión es
+    "has_motion", "empty", o "inconclusive" (partido más corto que la ventana de chequeo, o
+    algún error de FFmpeg al armar/medir la muestra — en ese caso siempre se sigue de largo con
+    el procesamiento normal, nunca se descarta un partido por una falla del chequeo en sí)."""
+    offset = timedelta(seconds=int(cfg["MOTION_CHECK_OFFSET_SECONDS"]))
+    sample_duration = timedelta(seconds=int(cfg["MOTION_CHECK_DURATION_SECONDS"]))
+    check_start = window_start + offset
+    check_end = min(check_start + sample_duration, window_end)
+    if check_start >= window_end:
+        return None, "inconclusive"
+
+    sample_clip = build_clip(covering, check_start, check_end, tmp_dir, f"{match_id}-motioncheck")
+    if sample_clip is None:
+        return None, "inconclusive"
+    try:
+        mafd = measure_motion(sample_clip, 0, (check_end - check_start).total_seconds())
+    finally:
+        sample_clip.unlink(missing_ok=True)
+
+    if mafd is None:
+        return None, "inconclusive"
+    threshold = float(cfg["MOTION_CHECK_MAFD_THRESHOLD"])
+    return mafd, ("has_motion" if mafd >= threshold else "empty")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -404,18 +452,44 @@ def upload_and_finalize(cfg: dict, state_dir: Path) -> bool:
     already_uploaded = set(meta["uploaded_relative_paths"])
     pending_uploads = [u for u in meta["uploads"] if u["relativePath"] not in already_uploaded]
 
+    # Verificación rápida (solo stat, no abre archivos) antes de disparar ninguna subida: si
+    # falta algo en disco el STATE_DIR está corrupto y no tiene sentido ni paralelizar ni
+    # reintentar.
     for upload in pending_uploads:
-        local_path = state_dir / upload["relativePath"]
-        if not local_path.exists():
+        if not (state_dir / upload["relativePath"]).exists():
             log("uploader-direct", f"Partido {match_id}: falta en disco {upload['relativePath']} — STATE_DIR corrupto/incompleto, se descarta.")
             return True
+
+    # Subidas EN PARALELO (ver comentario de MAX_CONCURRENT_UPLOADS en agent_lib.load_config):
+    # cada una sigue siendo un curl -T independiente (misma función put_file de siempre, sin
+    # tocar), pero varias corren a la vez en vez de esperar una por una a que termine su propio
+    # handshake TLS. meta_lock protege la única parte compartida entre hilos: anotar en meta
+    # qué archivo ya se confirmó y persistirlo a disco — se sigue escribiendo archivo por
+    # archivo (no al final del lote), así que un corte a mitad de subida sigue sin repetir lo
+    # ya confirmado, igual que en la versión secuencial original.
+    meta_lock = threading.Lock()
+    upload_errors: list[str] = []
+
+    def _upload_one(upload: dict) -> None:
+        local_path = state_dir / upload["relativePath"]
         try:
             put_file(upload["url"], local_path, upload["contentType"])
         except RuntimeError as exc:
-            log("uploader-direct", f"Partido {match_id}: {exc} — se reintenta en la próxima vuelta.")
-            return False
-        meta["uploaded_relative_paths"].append(upload["relativePath"])
-        _write_meta(state_dir, meta)  # persistido archivo por archivo: un corte a mitad de subida no repite lo ya confirmado
+            with meta_lock:
+                upload_errors.append(str(exc))
+            return
+        with meta_lock:
+            meta["uploaded_relative_paths"].append(upload["relativePath"])
+            _write_meta(state_dir, meta)
+
+    if pending_uploads:
+        max_workers = min(int(cfg["MAX_CONCURRENT_UPLOADS"]), len(pending_uploads))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            list(pool.map(_upload_one, pending_uploads))
+
+    if upload_errors:
+        log("uploader-direct", f"Partido {match_id}: {len(upload_errors)} subida(s) fallaron (ej.: {upload_errors[0]}) — se reintenta en la próxima vuelta.")
+        return False
 
     finalize_payload = {
         "manifestRelativePath": meta["manifest_relative_path"],
@@ -486,6 +560,24 @@ def process_once(cfg: dict) -> None:
         if covering is None:
             log("uploader-direct", f"Partido {match_id}: todavía no hay grabación local que cubra ese horario, se reintenta luego.")
             continue
+
+        motion_mode = cfg["MOTION_CHECK_MODE"]
+        if motion_mode != "off":
+            mafd, decision = check_motion_for_match(cfg, covering, window_start, window_end, tmp_dir, match_id)
+            if decision == "empty":
+                mafd_str = f"{mafd:.2f}" if mafd is not None else "?"
+                if motion_mode == "enforce":
+                    log("uploader-direct", f"Partido {match_id}: sin movimiento detectado (MAFD={mafd_str} < umbral {cfg['MOTION_CHECK_MAFD_THRESHOLD']}) — se marca como cancha vacía, no se sube video.")
+                    try:
+                        mark_match_empty(cfg, match_id, mafd)
+                    except RuntimeError as exc:
+                        log("uploader-direct", f"Partido {match_id}: no se pudo marcar como vacío ({exc}) — se reintenta en la próxima vuelta.")
+                    continue
+                else:  # dry_run
+                    log("uploader-direct", f"Partido {match_id}: [dry_run] sin movimiento detectado (MAFD={mafd_str}) — en modo enforce esto se saltearía; por ahora se procesa igual para poder calibrar.")
+            elif decision == "has_motion":
+                log("uploader-direct", f"Partido {match_id}: movimiento detectado (MAFD={mafd:.2f}).")
+            # "inconclusive": se sigue de largo sin loguear ruido extra.
 
         try:
             build_and_plan_match(cfg, match, covering, window_start, window_end, tmp_dir)
