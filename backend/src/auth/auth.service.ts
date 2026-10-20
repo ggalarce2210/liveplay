@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { eq, and, isNull, gt } from 'drizzle-orm';
@@ -14,6 +14,8 @@ const REFRESH_TOKEN_TTL_DAYS = 30;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private dbService: DbService,
     private jwt: JwtService,
@@ -62,7 +64,23 @@ export class AuthService {
       .returning();
 
     const appUrl = this.config.get('APP_PUBLIC_URL', 'http://localhost:3000');
-    await this.mail.sendVerificationEmail(user.email, emailVerifyToken, appUrl);
+
+    // Bug real encontrado 2026-10-20: antes este `await` no tenía try/catch, así que cualquier
+    // rechazo del proveedor de email (p.ej. Resend en modo sandbox devolviendo 403 para
+    // cualquier destinatario que no sea el dueño de la cuenta) tiraba un 500 sin capturar acá
+    // arriba — aunque la fila del usuario ya hubiera quedado insertada en la base un instante
+    // antes. Resultado confuso: el usuario veía "Internal server error" pero la cuenta en
+    // realidad SÍ se había creado (solo le faltaba `emailVerifiedAt`). Ahora un fallo de envío
+    // se loguea y la registración igual responde 201 — el usuario no se queda sin cuenta por un
+    // problema del proveedor de correo, aunque en ese caso no le va a llegar el mail y haga
+    // falta reenviarlo a mano (o arreglar el proveedor) para poder verificarla.
+    let emailDeliveryFailed = false;
+    try {
+      await this.mail.sendVerificationEmail(user.email, emailVerifyToken, appUrl);
+    } catch (err) {
+      this.logger.error(`No se pudo enviar el email de verificación a ${user.email}: ${(err as Error).message}`);
+      emailDeliveryFailed = true;
+    }
 
     // No emitimos tokens acá: la cuenta queda creada pero sin poder iniciar sesión hasta
     // confirmar el email (§3/§38 — "el login tiene que confirmar vía mail"). En modo mock
@@ -72,6 +90,7 @@ export class AuthService {
     return {
       user: this.toPublicUser(user),
       requiresEmailVerification: true,
+      ...(emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       ...(this.mail.isMockMode() ? { devVerifyUrl: `${appUrl}/verify-email?token=${emailVerifyToken}` } : {}),
     };
   }
@@ -98,9 +117,20 @@ export class AuthService {
     const emailVerifyToken = crypto.randomBytes(32).toString('hex');
     await this.db.update(users).set({ emailVerifyToken }).where(eq(users.id, user.id));
     const appUrl = this.config.get('APP_PUBLIC_URL', 'http://localhost:3000');
-    await this.mail.sendVerificationEmail(user.email, emailVerifyToken, appUrl);
 
-    return { success: true, ...(this.mail.isMockMode() ? { devVerifyUrl: `${appUrl}/verify-email?token=${emailVerifyToken}` } : {}) };
+    let emailDeliveryFailed = false;
+    try {
+      await this.mail.sendVerificationEmail(user.email, emailVerifyToken, appUrl);
+    } catch (err) {
+      this.logger.error(`No se pudo reenviar el email de verificación a ${user.email}: ${(err as Error).message}`);
+      emailDeliveryFailed = true;
+    }
+
+    return {
+      success: true,
+      ...(emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
+      ...(this.mail.isMockMode() ? { devVerifyUrl: `${appUrl}/verify-email?token=${emailVerifyToken}` } : {}),
+    };
   }
 
   async logout(userId: string, refreshToken: string) {
@@ -136,7 +166,13 @@ export class AuthService {
       .update(users)
       .set({ passwordResetToken: token, passwordResetExpiresAt: new Date(Date.now() + 60 * 60 * 1000) })
       .where(eq(users.id, user.id));
-    await this.mail.sendPasswordResetEmail(user.email, token, this.config.get('APP_PUBLIC_URL', 'http://localhost:3000'));
+    try {
+      await this.mail.sendPasswordResetEmail(user.email, token, this.config.get('APP_PUBLIC_URL', 'http://localhost:3000'));
+    } catch (err) {
+      // Mismo criterio que en register()/resendVerification(): un fallo del proveedor de email
+      // no debe tirar un 500 acá — el token ya quedó guardado, solo loguear para diagnóstico.
+      this.logger.error(`No se pudo enviar el email de recupero de contraseña a ${user.email}: ${(err as Error).message}`);
+    }
     return { success: true };
   }
 
