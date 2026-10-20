@@ -356,6 +356,46 @@ Python puro + llamadas a `ffmpeg`/`curl`, 100% portable sin cambios bajo WSL.
   propósito simulando un corte a mitad de subida) pero todavía no instalado en producción real
   en Los Pinos — ese es el próximo paso.
 
+## Chequeo de movimiento (sin reservas reales, agregado 2026-10-20)
+
+LivePlay genera un partido "placeholder" por cada hora de funcionamiento de la cancha
+(`MatchSchedulerService.ensureUpcomingMatches`, cron horario), haya o no una reserva real —
+hoy no está integrado con el sistema de turnos que usa cada complejo para que la gente reserve
+cancha (en "Los Pinos" es [CanchaYa](https://canchaya.ar/), un SaaS de terceros sin API/webhook
+documentado — investigado el 2026-10-20: solo tiene paneles pensados para que los mire una
+persona, nada pensado para que otro sistema lea sus reservas). Resultado: la mayoría de los
+partidos "pendientes" corresponden a horas en las que la cancha estuvo vacía, y procesar/subir
+un video de eso (FFmpeg local + ancho de banda) es tiempo tirado.
+
+En vez de depender de CanchaYa (requeriría o acceso de partner, incierto, o scraping de su web
+logueada — frágil, probablemente contra sus términos de servicio), se mide actividad directo
+sobre la grabación propia: `agent_lib.measure_motion` usa el filtro `signalstats` de FFmpeg
+(que ya usamos en todos lados en este mismo directorio) para calcular el MAFD ("Mean Absolute
+Frame Difference") de una ventana corta del partido — un número que crece cuanto más cambia la
+imagen de un frame al siguiente. Cancha vacía: MAFD bajo y estable (ruido de cámara, cambios de
+luz). Gente jugando: MAFD alto y sostenido. No es "IA"/machine learning, es un filtro de FFmpeg
+con un umbral.
+
+`uploader_direct.py` (`check_motion_for_match`) arma un clip CORTO (no el partido entero,
+`MOTION_CHECK_OFFSET_SECONDS`/`MOTION_CHECK_DURATION_SECONDS` en `config.env`, default 10 min
+de offset + 5 min de muestra) antes de decidir si vale la pena armar el HLS completo y subirlo.
+`MOTION_CHECK_MODE` controla qué hace con el resultado:
+
+- `off`: no chequea nada (comportamiento de antes de esto).
+- `dry_run` (**default**): mide y loguea el MAFD, pero sigue procesando el partido igual —
+  pensado para calibrar `MOTION_CHECK_MAFD_THRESHOLD` con partidos reales (revisar los logs de
+  `uploader-direct` después de un partido real y comparar el MAFD logueado contra "hubo gente
+  jugando o no") antes de confiar en que esto no se coma un partido de verdad.
+- `enforce`: si el chequeo da "sin movimiento", llama a `POST /agent/matches/:id/mark-empty`
+  (`AgentService.markEmpty`) en vez de procesar — marca el partido `FAILED` (mismo estado que
+  ya excluye `AgentService.pendingMatches`, sin necesidad de ningún estado/columna nueva) con
+  el MAFD medido guardado en `matches.resultSummary` solo a fines de diagnóstico.
+
+**No pasar a `enforce` sin antes revisar un puñado de partidos reales en modo `dry_run`** — un
+umbral mal calibrado en `enforce` puede marcar como "vacía" una cancha que sí tuvo partido (por
+ejemplo pádel con jugadores quietos en las esquinas, o mala luz) y esa grabación real nunca
+llega a subirse. Mientras tanto, dejar corriendo en `dry_run`.
+
 ## Limitaciones conocidas de esta primera version
 
 - El corte del video al horario exacto del partido usa `-c copy` (sin recodificar) en las
