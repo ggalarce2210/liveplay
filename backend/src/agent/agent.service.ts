@@ -217,4 +217,37 @@ export class AgentService {
 
     return { videoId: video.id, status: 'READY' as const, durationWarning };
   }
+
+  /**
+   * Llamado por el agente local (ver backend/AGENTE.md, "Chequeo de movimiento") cuando su
+   * chequeo de actividad (MAFD vía FFmpeg, ver local-agent/agent_lib.py `measure_motion`) no
+   * detecta movimiento real en la ventana de este partido — hoy LivePlay genera un partido
+   * "placeholder" por cada hora de funcionamiento de la cancha, haya o no reserva real en el
+   * sistema de turnos del complejo (CanchaYa en "Los Pinos", sin API disponible — ver nota
+   * 2026-10-20 en el resumen del proyecto), así que la mayoría de esas horas no tienen partido
+   * real. Marca el partido `FAILED` — el mismo estado que `pendingMatches` ya excluye arriba —
+   * para que deje de reintentarse, SIN gastar tiempo/ancho de banda armando y subiendo el video
+   * de una cancha vacía. `resultSummary` (columna jsonb ya existente, sin migración) guarda el
+   * motivo solo a fines de diagnóstico — el backend nunca lo usa para decidir nada.
+   */
+  async markEmpty(matchId: string, courtId: string, dto: { reason?: string; mafd?: number }) {
+    const match = await this.assertMatchBelongsToCourt(matchId, courtId);
+    if (!match) throw new NotFoundException('Ese partido no pertenece a la cancha de este agente');
+
+    await this.db
+      .update(matches)
+      .set({
+        status: 'FAILED',
+        resultSummary: {
+          emptyCourt: true,
+          reason: dto.reason ?? 'no_motion_detected',
+          mafd: dto.mafd ?? null,
+          detectedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(matches.id, matchId));
+
+    return { id: matchId, status: 'FAILED' as const };
+  }
 }
