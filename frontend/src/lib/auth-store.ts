@@ -1,4 +1,4 @@
-'use client';
+í'use client';
 
 import { create } from 'zustand';
 import { User } from '@/types';
@@ -8,6 +8,7 @@ interface RegisterResult {
   user: User;
   requiresEmailVerification: true;
   devVerifyUrl?: string;
+  emailDeliveryFailed?: boolean;
 }
 
 interface AuthState {
