@@ -13,17 +13,25 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 /** Nombre de archivo para la descarga: el título del clip, pasado a algo seguro para un
- *  filesystem (sin tildes raras ni barras) y siempre terminado en .mp4. */
+ * filesystem (sin tildes raras ni barras) y siempre terminado en .mp4. */
 function clipFileName(title: string): string {
   const slug = title
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return `${slug || 'clip'}.mp4`;
 }
+
+/** Estado del modal de descarga (ver `onDownload` más abajo). `blobUrl` solo existe en
+ * `ready` — es un object URL del propio navegador (same-origin), por eso "Ver"/compartir
+ * pueden usarlo directo sin volver a pegarle al storage. */
+type DownloadState =
+  | { clipId: string; status: 'downloading'; progress: number }
+  | { clipId: string; status: 'ready'; progress: 100; blobUrl: string; fileName: string }
+  | { clipId: string; status: 'error'; progress: 0; error: string };
 
 export default function ClipsPage() {
   const [clips, setClips] = useState<Clip[] | null>(null);
@@ -38,6 +46,16 @@ export default function ClipsPage() {
   const [shareMenuId, setShareMenuId] = useState<string | null>(null);
   const [shareBusyId, setShareBusyId] = useState<string | null>(null);
   const [shareFeedback, setShareFeedback] = useState<{ id: string; message: string } | null>(null);
+
+  // Modal de descarga (2026-10-21): antes "Descargar video" armaba un <a download> apuntando
+  // directo a la URL firmada de R2/S3 — pero el atributo `download` de un <a> SOLO lo respeta
+  // el navegador si el link es same-origin; contra una URL cross-origin (como cualquier URL
+  // firmada de storage) el navegador lo trata como una navegación común, así que Chrome abría
+  // una pestaña nueva y reproducía el video en vez de bajarlo. Fix real: traer el archivo con
+  // `fetch` (sí autorizado por la CORS Policy del bucket, ver resumen del proyecto) y armar un
+  // Blob/object URL propio — ESE sí es same-origin (`blob:`) y el `download` funciona de
+  // verdad. De paso, leer la respuesta de a poco permite mostrar progreso real.
+  const [downloadState, setDownloadState] = useState<DownloadState | null>(null);
 
   async function load() {
     const data = await api.get<Clip[]>('/clips');
@@ -101,8 +119,8 @@ export default function ClipsPage() {
   }
 
   /** Crea un enlace privado para el clip (mismo endpoint /share-links que "Compartir partido",
-   *  pero con clipId en vez de matchId) y lo manda por el share sheet nativo si existe
-   *  (navigator.share, lo normal en el celular), o lo copia al portapapeles si no. */
+   * pero con clipId en vez de matchId) y lo manda por el share sheet nativo si existe
+   * (navigator.share, lo normal en el celular), o lo copia al portapapeles si no. */
   async function onSendLink(clip: Clip) {
     setShareMenuId(null);
     setShareBusyId(clip.id);
@@ -127,24 +145,88 @@ export default function ClipsPage() {
     }
   }
 
-  /** Descarga el archivo del clip. Reusa el mismo endpoint de playback que "Ver clip" (URL
-   *  firmada, valida 30 min) y fuerza la descarga con un <a download> en vez de abrir el video. */
+  /** Cierra el modal de descarga y libera el object URL (si lo hubiera) — sin esto, cada
+   * descarga dejaría un Blob entero vivo en memoria hasta recargar la página. */
+  function closeDownloadModal() {
+    setDownloadState((prev) => {
+      if (prev?.status === 'ready') URL.revokeObjectURL(prev.blobUrl);
+      return null;
+    });
+  }
+
+  /** Descarga el archivo del clip de verdad (ver comentario de `DownloadState` más arriba):
+   * trae el video con `fetch`, arma un Blob propio con progreso real, dispara el guardado al
+   * dispositivo con un `<a download>` sobre ESE blob (same-origin, por eso ahora sí funciona), y
+   * deja el modal en estado "ready" con accesos directos a "Ver" y "Enviar por WhatsApp". */
   async function onDownload(clip: Clip) {
     setShareMenuId(null);
-    setShareBusyId(clip.id);
+    setDownloadState({ clipId: clip.id, status: 'downloading', progress: 0 });
     try {
-      const res = await api.get<{ status: string; url: string | null }>(`/clips/${clip.id}/playback`);
-      if (!res.url) throw new Error('El clip todavia no tiene un archivo para descargar.');
+      const planRes = await api.get<{ status: string; url: string | null }>(`/clips/${clip.id}/playback`);
+      if (!planRes.url) throw new Error('El clip todavia no tiene un archivo para descargar.');
+
+      const response = await fetch(planRes.url);
+      if (!response.ok || !response.body) throw new Error('No pudimos descargar este clip.');
+
+      const totalBytes = Number(response.headers.get('content-length')) || 0;
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let receivedBytes = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          receivedBytes += value.length;
+          const progress = totalBytes ? Math.min(100, Math.round((receivedBytes / totalBytes) * 100)) : 0;
+          setDownloadState((prev) => (prev && prev.clipId === clip.id && prev.status === 'downloading' ? { ...prev, progress } : prev));
+        }
+      }
+
+      const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'video/mp4' });
+      const blobUrl = URL.createObjectURL(blob);
+      const fileName = clipFileName(clip.title);
+
       const a = document.createElement('a');
-      a.href = res.url;
-      a.download = clipFileName(clip.title);
+      a.href = blobUrl;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       a.remove();
+
+      setDownloadState({ clipId: clip.id, status: 'ready', progress: 100, blobUrl, fileName });
     } catch (err) {
-      flashFeedback(clip.id, errorMessage(err, 'No pudimos descargar este clip'));
-    } finally {
-      setShareBusyId(null);
+      setDownloadState({ clipId: clip.id, status: 'error', progress: 0, error: errorMessage(err, 'No pudimos descargar este clip') });
+    }
+  }
+
+  /** Comparte el video YA descargado (ver `onDownload`) directo por WhatsApp. En celular, con
+   * soporte del navegador para compartir archivos (`navigator.canShare({ files })`), abre el
+   * share sheet nativo con el video adjunto de verdad — el usuario elige WhatsApp ahí mismo. En
+   * desktop (o un navegador sin ese soporte) no hay forma de adjuntar un archivo a WhatsApp Web
+   * desde la página, así que el fallback comparte el mismo link privado de "Enviar link" directo
+   * a `wa.me` (abre WhatsApp Web/la app con el mensaje ya armado). */
+  async function shareDownloadedToWhatsApp(clip: Clip) {
+    if (downloadState?.status === 'ready' && downloadState.clipId === clip.id) {
+      try {
+        const fileRes = await fetch(downloadState.blobUrl);
+        const blob = await fileRes.blob();
+        const file = new File([blob], downloadState.fileName, { type: blob.type || 'video/mp4' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: clip.title });
+          return;
+        }
+      } catch {
+        // Cancelado por el usuario, o el navegador no soporta compartir archivos — seguimos al
+        // fallback de abajo en vez de mostrar un error.
+      }
+    }
+    try {
+      const res = await api.post<{ url: string }>('/share-links', { clipId: clip.id, visibility: 'PRIVATE', expiresInHours: 48 });
+      const fullUrl = `${window.location.origin}${res.url}`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(fullUrl)}`, '_blank');
+    } catch (err) {
+      flashFeedback(clip.id, errorMessage(err, 'No pudimos compartir por WhatsApp'));
     }
   }
 
@@ -214,7 +296,7 @@ export default function ClipsPage() {
                 <div className="relative">
                   <button
                     onClick={() => setShareMenuId((prev) => (prev === clip.id ? null : clip.id))}
-                    disabled={shareBusyId === clip.id}
+                    disabled={shareBusyId === clip.id || downloadState?.clipId === clip.id}
                     className="btn-secondary !py-2 text-sm disabled:opacity-60"
                     aria-label="Compartir clip"
                   >
@@ -223,8 +305,8 @@ export default function ClipsPage() {
                     ) : (
                       <>
                         {/* Icono propio (clásico ícono "compartir" de Android, 3 puntos conectados) en el
-                            verde "pitch" de la marca, en vez del emoji 📤 original — pedido del usuario
-                            2026-10-07, eligió esta variante entre 5 opciones probadas. */}
+                        verde "pitch" de la marca, en vez del emoji 📤 original — pedido del usuario
+                        2026-10-07, eligió esta variante entre 5 opciones probadas. */}
                         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
                           <circle cx="18" cy="5" r="2.6" fill="#2f9a52" />
                           <circle cx="6" cy="12" r="2.6" fill="#2f9a52" />
@@ -269,6 +351,55 @@ export default function ClipsPage() {
           </div>
         ))}
       </div>
+
+      {/* Modal de descarga: progreso real mientras se trae el archivo, y al terminar accesos
+      directos a "Ver" el video ya bajado o mandarlo por WhatsApp — ver `onDownload` y
+      `shareDownloadedToWhatsApp` más arriba para el detalle técnico de por qué hacía falta. */}
+      {downloadState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={() => downloadState.status !== 'downloading' && closeDownloadModal()}>
+          <div className="card max-w-sm p-6 text-center" onClick={(e) => e.stopPropagation()}>
+            {downloadState.status === 'downloading' && (
+              <>
+                <p className="mb-3 text-sm text-ink-200">Descargando video...</p>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-ink-700">
+                  <div className="h-full bg-pitch-500 transition-all" style={{ width: `${downloadState.progress}%` }} />
+                </div>
+                <p className="mt-2 text-xs text-ink-400">{downloadState.progress > 0 ? `${downloadState.progress}%` : 'Empezando...'}</p>
+              </>
+            )}
+            {downloadState.status === 'ready' && (
+              <>
+                <p className="mb-4 text-sm text-pitch-400">✓ Video descargado</p>
+                <div className="flex flex-col gap-2">
+                  <button onClick={() => window.open(downloadState.blobUrl, '_blank')} className="btn-secondary w-full !py-2 text-sm">
+                    👁 Ver
+                  </button>
+                  <button
+                    onClick={() => {
+                      const clip = clips?.find((c) => c.id === downloadState.clipId);
+                      if (clip) void shareDownloadedToWhatsApp(clip);
+                    }}
+                    className="btn-primary w-full !py-2 text-sm"
+                  >
+                    💬 Enviar por WhatsApp
+                  </button>
+                </div>
+                <button onClick={closeDownloadModal} className="mt-3 text-xs text-ink-400 hover:text-white">
+                  Cerrar
+                </button>
+              </>
+            )}
+            {downloadState.status === 'error' && (
+              <>
+                <p className="text-sm text-red-400">{downloadState.error}</p>
+                <button onClick={closeDownloadModal} className="btn-secondary mt-4 w-full !py-2 text-sm">
+                  Cerrar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
