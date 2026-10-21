@@ -1,13 +1,15 @@
-import { Body, ConflictException, Controller, Delete, ForbiddenException, Get, Inject, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, ConflictException, Controller, Delete, ForbiddenException, Get, HttpException, HttpStatus, Inject, NotFoundException, Param, Post, UseGuards } from '@nestjs/common';
 import { asc, desc, eq } from 'drizzle-orm';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, AuthUser } from '../common/decorators/current-user.decorator';
 import { Audit } from '../common/interceptors/audit-log.interceptor';
 import { DbService } from '../db/db.service';
-import { clips } from '../db/schema';
+import { clips, matches } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 import { STORAGE_DRIVER } from '../storage/storage.module';
 import { StorageDriver } from '../storage/storage.types';
+import { Role } from '../common/roles';
+import { VideoAccessService } from '../payments/video-access.service';
 
 /** Máximo de clips/momentos que un usuario puede tener guardados a la vez (pedido explícito del
  *  usuario 2026-10-05, para no dejar crecer el storage sin límite por usuario). Al llegar al
@@ -23,6 +25,7 @@ export class ClipsController {
     private dbService: DbService,
     private videoProcessing: VideoProcessingService,
     @Inject(STORAGE_DRIVER) private storage: StorageDriver,
+    private videoAccess: VideoAccessService,
   ) {}
   private get db() {
     return this.dbService.db;
@@ -54,6 +57,16 @@ export class ClipsController {
         oldestClips: existing.slice(0, 3),
       });
     }
+    const match = await this.db.query.matches.findFirst({
+      where: eq(matches.id, body.matchId),
+      with: { complex: true },
+    });
+    if (!match) throw new NotFoundException('Partido no encontrado');
+    // Antes esto no chequeaba nada de pago: un PLAYER sin pase vigente podía generar un clip de
+    // un partido de un complejo que cobra y esquivar así el paywall de VideosService (§25) por
+    // completo. Mismo criterio que VideosService.checkPaywall() (ver comentario ahí).
+    await this.assertVideoAccess(match.complex, user);
+
     const [clip] = await this.db
       .insert(clips)
       .values({ matchId: body.matchId, createdByUserId: user.userId, title: body.title, startSeconds: body.startSeconds, endSeconds: body.endSeconds, status: 'PENDING' })
@@ -64,9 +77,15 @@ export class ClipsController {
 
   @Get(':id/playback')
   async getPlaybackUrl(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, id) });
+    const clip = await this.db.query.clips.findFirst({
+      where: eq(clips.id, id),
+      with: { match: { with: { complex: true } } },
+    });
     if (!clip) throw new ForbiddenException();
     if (clip.createdByUserId !== user.userId) throw new ForbiddenException();
+    // Mismo chequeo que en `create()`: si el pase del usuario venció después de generar el clip
+    // (o el clip es viejo, de antes de este fix), tampoco se entrega la URL de descarga.
+    if (clip.match?.complex) await this.assertVideoAccess(clip.match.complex, user);
     if (clip.status !== 'READY' || !clip.storageKey) return { status: clip.status, url: null };
     const url = await this.storage.getSignedReadUrl(clip.storageKey, 60 * 30);
     return { status: clip.status, url };
@@ -79,9 +98,13 @@ export class ClipsController {
   @Audit('CLIP_CREATE', 'Clip')
   @Post(':id/retry')
   async retry(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const clip = await this.db.query.clips.findFirst({ where: eq(clips.id, id) });
+    const clip = await this.db.query.clips.findFirst({
+      where: eq(clips.id, id),
+      with: { match: { with: { complex: true } } },
+    });
     if (!clip) throw new ForbiddenException();
     if (clip.createdByUserId !== user.userId) throw new ForbiddenException();
+    if (clip.match?.complex) await this.assertVideoAccess(clip.match.complex, user);
     const [updated] = await this.db
       .update(clips)
       .set({ status: 'PENDING', errorMessage: null, updatedAt: new Date() })
@@ -100,5 +123,32 @@ export class ClipsController {
     if (clip.storageKey) await this.storage.deleteObject(clip.storageKey);
     const [deleted] = await this.db.delete(clips).where(eq(clips.id, id)).returning();
     return deleted;
+  }
+
+  /**
+   * Pago por ver videos (§25 / 2026-10-16), extendido a clips (2026-10-21): si el complejo del
+   * partido cobra por ver sus videos, SUPER_ADMIN/COMPLEX_ADMIN siguen sin pagar; solo a un
+   * PLAYER se le exige un pase vigente para poder generar o descargar un clip de ese partido.
+   * Sin esto, "Mis mejores momentos" era una forma de ver (y llevarse) contenido pago sin pasar
+   * nunca por el paywall de la pantalla de video.
+   */
+  private async assertVideoAccess(
+    complex: { id: string; chargesForVideoAccess: boolean; videoAccessPriceArs: number | null; videoAccessPassDays: number | null } | null | undefined,
+    user: AuthUser,
+  ) {
+    if (!complex?.chargesForVideoAccess) return;
+    if (user.role !== Role.PLAYER) return;
+    const hasAccess = await this.videoAccess.hasActivePass(complex.id, user.userId);
+    if (hasAccess) return;
+    throw new HttpException(
+      {
+        code: 'PAYMENT_REQUIRED',
+        message: 'Necesitás un pase vigente para este complejo para generar o descargar clips.',
+        complexId: complex.id,
+        priceArs: complex.videoAccessPriceArs,
+        passDays: complex.videoAccessPassDays,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
   }
 }
