@@ -109,11 +109,24 @@ export class StreamController {
    * reemplazando cada referencia relativa por una URL firmada de corta duración a este mismo
    * endpoint — usado tanto sirviendo desde disco local como desde un bucket remoto (§25: nunca
    * se expone la key/ruta física real al cliente).
+   *
+   * Bug real encontrado el 2026-10-21: esta función arma la URL pública concatenando
+   * `API_PUBLIC_URL` (config) + "/api/stream/...". Eso fue correcto mientras `API_PUBLIC_URL`
+   * en Render apuntaba solo al host (sin "/api"). El 2026-10-20 se corrigió `API_PUBLIC_URL`
+   * para que SÍ incluya el sufijo "/api" — necesario para que el agente local
+   * (`agent-enroll.controller.ts` le entrega este mismo valor al mini-PC como
+   * `LIVEPLAY_API_BASE`, y `local-agent/agent_lib.py` arma sus URLs como
+   * `f"{LIVEPLAY_API_BASE}/agent/..."` sin agregar "/api" de nuevo) — pero esa misma variable
+   * la lee ACÁ TAMBIÉN esta función, que todavía agregaba su propio "/api/" a mano, resultando
+   * en URLs con "/api/api/stream/..." (404 siempre). Esto rompió la reproducción/miniaturas de
+   * TODOS los partidos de la plataforma (no solo los de Escenario B) apenas se aplicó el fix
+   * de `API_PUBLIC_URL`. Fix: `API_PUBLIC_URL` ya trae el prefijo "/api" puesto, así que acá
+   * alcanza con `${publicBaseUrl}/stream/...` (sin agregarlo de nuevo).
    */
   private rewriteManifestOrVtt(content: string, contentType: string, key: string): string {
     const baseKeyDir = key.substring(0, key.lastIndexOf('/'));
     const secret = this.config.get<string>('VIDEO_URL_SIGNING_SECRET', 'dev-secret-change-me');
-    const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001');
+    const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001/api');
 
     if (contentType === 'application/vnd.apple.mpegurl') {
       return content
@@ -123,7 +136,7 @@ export class StreamController {
           if (!trimmed || trimmed.startsWith('#')) return line;
           const segKey = `${baseKeyDir}/${trimmed}`;
           const segToken = jwt.sign({ key: segKey }, secret, { expiresIn: 60 * 60 * 4 });
-          return `${publicBaseUrl}/api/stream/${encodeURIComponent(segToken)}`;
+          return `${publicBaseUrl}/stream/${encodeURIComponent(segToken)}`;
         })
         .join('\n');
     }
@@ -131,7 +144,7 @@ export class StreamController {
     return content.replace(/^([\w.-]+\.jpg)(#xywh=[\d,]+)$/gm, (_match, fileName, fragment) => {
       const spriteKey = `${baseKeyDir}/${fileName}`;
       const spriteToken = jwt.sign({ key: spriteKey }, secret, { expiresIn: 60 * 60 * 4 });
-      return `${publicBaseUrl}/api/stream/${encodeURIComponent(spriteToken)}${fragment}`;
+      return `${publicBaseUrl}/stream/${encodeURIComponent(spriteToken)}${fragment}`;
     });
   }
 }
