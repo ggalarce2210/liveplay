@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
 
 /**
- * Arma la URL publica /api/stream/:token para una key de storage, sin importar que driver
+ * Arma la URL publica /stream/:token para una key de storage, sin importar que driver
  * este activo (LOCAL o S3/R2).
  *
  * Por que existe: StorageDriver.getSignedReadUrl() significa cosas distintas segun el driver
@@ -24,6 +24,18 @@ import * as jwt from 'jsonwebtoken';
  * driver activo. storage.getSignedReadUrl() queda reservado para lo que StreamController usa
  * internamente (redirigir un segmento individual al bucket) y para archivos sueltos que no
  * necesitan reescritura (ej. un clip ya renderizado a un unico .mp4).
+ *
+ * Bug real encontrado el 2026-10-21 (mismo patron que en StreamController.rewriteManifestOrVtt):
+ * esta funcion agregaba su propio "/api/stream/..." a mano sobre `API_PUBLIC_URL`. Eso fue
+ * correcto mientras `API_PUBLIC_URL` en Render apuntaba solo al host (sin "/api"). El
+ * 2026-10-20 se corrigio `API_PUBLIC_URL` para que SI incluya el sufijo "/api" (necesario para
+ * el agente local, ver agent-enroll.controller.ts) - pero esta funcion seguia agregando su
+ * propio "/api/" encima, resultando en URLs "/api/api/stream/..." (404 siempre). Esto rompio
+ * la carga del manifest/thumbnails de TODOS los partidos de la plataforma apenas se aplico el
+ * fix de `API_PUBLIC_URL`, ya que esta es la funcion que arma el link "de entrada" que recibe
+ * el navegador (ver matches.service.ts / share.controller.ts). Fix: `API_PUBLIC_URL` ya trae
+ * el prefijo "/api" puesto, asi que alcanza con `${publicBaseUrl}/stream/...` (sin agregarlo
+ * de nuevo).
  */
 @Injectable()
 export class StreamTokenService {
@@ -31,8 +43,8 @@ export class StreamTokenService {
 
   sign(key: string, expiresInSeconds: number): string {
     const secret = this.config.get<string>('VIDEO_URL_SIGNING_SECRET', 'dev-secret-change-me');
-    const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001');
+    const publicBaseUrl = this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001/api');
     const token = jwt.sign({ key }, secret, { expiresIn: expiresInSeconds });
-    return `${publicBaseUrl}/api/stream/${encodeURIComponent(token)}`;
+    return `${publicBaseUrl}/stream/${encodeURIComponent(token)}`;
   }
 }
