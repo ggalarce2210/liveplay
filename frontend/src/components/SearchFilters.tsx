@@ -14,6 +14,10 @@ interface CourtOption {
   id: string;
   name: string;
   sportType?: string;
+  /** Nombre del complejo al que pertenece (2026-10-22, ver DashboardPage): solo se usa para
+   * desambiguar en el desplegable de "Cancha" cuando el jugador tiene más de un complejo
+   * favorito — con uno solo, mostrar el nombre del complejo en cada opción es ruido de más. */
+  complexName?: string;
 }
 
 const DATE_PRESETS: { value: Filters['datePreset']; label: string }[] = [
@@ -24,8 +28,12 @@ const DATE_PRESETS: { value: Filters['datePreset']; label: string }[] = [
 ];
 
 // El selector de "Complejo" vivía acá antes (2026-10-22): se sacó porque ahora el complejo se
-// elige una sola vez en el gate de `/dashboard` (`ComplexGate`) y queda fijo — este componente
-// ya solo filtra DENTRO de ese complejo (deporte, cancha, horario, fecha). Ver DashboardPage.
+// elige en el gate de `/dashboard` (`ComplexGate`) como cancha(s) favorita(s) — este componente
+// ya solo filtra DENTRO de esos complejos favoritos (deporte, cancha, horario, fecha). Ver
+// DashboardPage. Actualización, misma fecha: con más de un complejo favorito (pedido del
+// cliente: "si en el filtro pongo padel me dice que no hay nada" — antes "Mis partidos" solo
+// buscaba en UN complejo fijo), el deporte y la cancha ahora se buscan en TODOS los favoritos a
+// la vez, no en uno solo.
 export default function SearchFilters({
   filters,
   onChange,
@@ -85,7 +93,7 @@ export default function SearchFilters({
               <option value="">Todas</option>
               {courtsForSport.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.name}
+                  {c.complexName ? `${c.complexName} · ${c.name}` : c.name}
                 </option>
               ))}
             </select>
