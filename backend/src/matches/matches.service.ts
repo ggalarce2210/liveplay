@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { and, asc, desc, eq, gte, lt, lte } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
@@ -46,7 +46,19 @@ export class MatchesService {
     // aplicaba para SUPER_ADMIN/COMPLEX_ADMIN) — ver discusión en el chat del 2026-09-19.
     // Si en el futuro se quiere volver a acotar (ej. con un código por turno), es acá.
 
-    if (query.complexId) conditions.push(eq(matches.complexId, query.complexId));
+    // `complexIds` (plural, lista separada por coma) tiene prioridad sobre `complexId`: es lo que
+    // manda "Mis partidos" desde que un jugador puede tener varios complejos favoritos a la vez
+    // (2026-10-22, ver `userFavoriteComplexes` en schema.ts) — antes, con un solo complejo fijo,
+    // el filtro de deporte podía no encontrar nada si el partido quedó grabado en OTRO complejo
+    // favorito del jugador. `complexId` (singular) se deja para quien siga buscando un único
+    // complejo puntual (ej. el admin de cancha).
+    if (query.complexIds) {
+      const ids = query.complexIds.split(',').map((s) => s.trim()).filter(Boolean);
+      if (ids.length === 1) conditions.push(eq(matches.complexId, ids[0]));
+      else if (ids.length > 1) conditions.push(inArray(matches.complexId, ids));
+    } else if (query.complexId) {
+      conditions.push(eq(matches.complexId, query.complexId));
+    }
     if (query.courtId) conditions.push(eq(matches.courtId, query.courtId));
     if (query.sportType) conditions.push(eq(matches.sportType, query.sportType));
 
