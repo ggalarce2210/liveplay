@@ -31,6 +31,16 @@ export class SearchMatchesDto {
   @IsString()
   complexId?: string;
 
+  /**
+   * Lista de ids de complejo separados por coma (2026-10-22, ver `userFavoriteComplexes` en
+   * schema.ts): "Mis partidos" ahora busca en TODOS los complejos favoritos del jugador a la vez,
+   * no en uno solo — si viene, tiene prioridad sobre `complexId` (que se deja para quien todavía
+   * busque un único complejo, ej. el admin de cancha).
+   */
+  @IsOptional()
+  @IsString()
+  complexIds?: string;
+
   @IsOptional()
   @IsString()
   timeFrom?: string; // "18:00"
