@@ -179,13 +179,40 @@ def segments_for_window(
     if window_end >= active_start:
         return None
 
+    # Cuánto puede estirarse un segmento más allá de su duración nominal antes de asumir que
+    # hubo un corte real de grabación en el medio (wifi, reinicio, el bug de permisos de
+    # record.sh del 2026-10-21, etc.) — un poco de margen para el jitter normal entre
+    # rotaciones de ffmpeg, pero nunca "hasta que aparezca el próximo segmento que sea". Bug
+    # real encontrado el 2026-10-22: acá se usaba directamente el inicio del segmento
+    # siguiente como fin del actual sin este tope, así que cuando record.sh estuvo caído casi
+    # 8hs (permiso de ejecución perdido), el último segmento bueno antes del corte quedaba
+    # "cubriendo" ese hueco entero — varios partidos de esa tarde (horas sin ninguna grabación
+    # real) terminaban armando el clip con ESE segmento viejo, y como encima estaba corrupto
+    # (ffmpeg cortado a mitad de escritura en un corte previo), el concat fallaba para siempre
+    # en cada vuelta en vez de reportar directamente que todavía no había grabación.
+    max_segment_span = timedelta(seconds=segment_seconds * 1.5)
+
     covering = []
     for i, (start, path) in enumerate(segments[:-1]):  # excluye el activo
-        end = segments[i + 1][0] if i + 1 < len(segments) else start + timedelta(seconds=segment_seconds)
+        next_start = segments[i + 1][0]
+        gap = next_start - start
+        end = next_start if gap <= max_segment_span else start + timedelta(seconds=segment_seconds)
         if end > window_start and start < window_end:
             covering.append((start, path))
 
-    return covering or None
+    if not covering:
+        return None
+
+    # Cobertura real: si entre los segmentos que solapan la ventana hay un corte de grabación
+    # en el medio, mejor tratarlo como "todavía no cubierto" (se reintenta solo más adelante,
+    # igual que si nunca se hubiera grabado) en vez de armar un clip con un agujero silencioso
+    # adentro sin que nadie se entere.
+    covering.sort(key=lambda item: item[0])
+    for (seg_start, _), (seg_next_start, _) in zip(covering, covering[1:]):
+        if seg_next_start - seg_start > max_segment_span:
+            return None
+
+    return covering
 
 
 def build_clip(
