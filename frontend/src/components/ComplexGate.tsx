@@ -14,20 +14,36 @@ export interface SelectedComplex {
 }
 
 /**
- * Selector "ciudad → complejo" que se muestra en "Mis partidos" (`/dashboard`) hasta que el
- * usuario elige su cancha habitual — pedido del cliente (2026-10-22): antes el dashboard
- * arrancaba mostrando los partidos de TODOS los complejos (filtro "Complejo: Todos" por
- * default), lo cual no tiene sentido para un jugador que juega siempre en el mismo lugar y
- * confunde además al mostrar partidos de complejos/ciudades ajenas. Mismo patrón de 2 pasos que
- * ya usa el buscador público (`CourtExplorer`, pasos "ciudad" → "cancha"), pero sin los pasos de
- * deporte/fecha: acá el deporte se sigue filtrando después, ya adentro del complejo elegido, con
+ * Selector "ciudad → complejo" que se muestra en "Mis partidos" (`/dashboard`) para elegir una
+ * cancha favorita — pedido del cliente (2026-10-22): antes el dashboard arrancaba mostrando los
+ * partidos de TODOS los complejos (filtro "Complejo: Todos" por default), lo cual no tiene
+ * sentido para un jugador que siempre juega en el mismo lugar y confunde además al mostrar
+ * partidos de complejos/ciudades ajenas. Mismo patrón de 2 pasos que ya usa el buscador público
+ * (`CourtExplorer`, pasos "ciudad" → "cancha"), pero sin los pasos de deporte/fecha: acá el
+ * deporte se sigue filtrando después, ya adentro de los complejos favoritos elegidos, con
  * `SearchFilters`.
+ *
+ * Este mismo componente sirve para dos casos (2026-10-22, segunda vuelta: "deberiamos poner un
+ * agregar como favorito" — un jugador puede tener más de un complejo favorito, ej. uno de
+ * Fútbol 5 y otro de Pádel, y "Mis partidos" busca en todos a la vez):
+ *   1. Elegir la PRIMERA cancha favorita (obligatorio, sin `onCancel` — no hay nada que cancelar
+ *      porque todavía no hay ningún favorito).
+ *   2. Agregar OTRA cancha favorita a una lista que ya tiene al menos una (`onCancel` presente,
+ *      y `excludeComplexIds` para no mostrar de nuevo un complejo que ya es favorito).
  */
 export default function ComplexGate({
   onSelect,
+  onCancel,
+  excludeComplexIds,
   saving,
 }: {
   onSelect: (complex: SelectedComplex) => void;
+  /** Si viene, se muestra un link para cerrar el selector sin elegir nada (caso "agregar otra
+   * cancha" con al menos un favorito ya guardado). */
+  onCancel?: () => void;
+  /** Ids de complejos a ocultar en el paso 2 (los que ya son favoritos) — evita que el usuario
+   * "elija" de nuevo uno que ya tiene y no vea pasar nada. */
+  excludeComplexIds?: string[];
   saving?: boolean;
 }) {
   const [step, setStep] = useState<Step>('city');
@@ -74,6 +90,12 @@ export default function ComplexGate({
     return cities.filter((c) => c.toLowerCase().includes(q));
   }, [cities, citySearch]);
 
+  const visibleComplexes = useMemo(() => {
+    if (!complexes) return complexes;
+    if (!excludeComplexIds?.length) return complexes;
+    return complexes.filter((c) => !excludeComplexIds.includes(c.id));
+  }, [complexes, excludeComplexIds]);
+
   function chooseComplex(c: Complex) {
     setError(null);
     onSelect({ id: c.id, name: c.name, city: c.city ?? city ?? null });
@@ -81,17 +103,24 @@ export default function ComplexGate({
 
   return (
     <div className="card p-6 sm:p-8">
-      <div className="mb-6 flex flex-wrap items-center gap-2 text-sm text-ink-400">
-        <Crumb active={step === 'city'} onClick={() => setStep('city')}>
-          1. Ciudad{city ? `: ${city}` : ''}
-        </Crumb>
-        {city && (
-          <>
-            <span>›</span>
-            <Crumb active={step === 'complex'} onClick={() => setStep('complex')}>
-              2. Complejo
-            </Crumb>
-          </>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-ink-400">
+          <Crumb active={step === 'city'} onClick={() => setStep('city')}>
+            1. Ciudad{city ? `: ${city}` : ''}
+          </Crumb>
+          {city && (
+            <>
+              <span>›</span>
+              <Crumb active={step === 'complex'} onClick={() => setStep('complex')}>
+                2. Complejo
+              </Crumb>
+            </>
+          )}
+        </div>
+        {onCancel && (
+          <button onClick={onCancel} className="text-sm text-ink-400 hover:text-white">
+            ✕ Cancelar
+          </button>
         )}
       </div>
 
@@ -138,9 +167,12 @@ export default function ComplexGate({
           {complexes !== null && complexes.length === 0 && (
             <p className="mt-5 text-sm text-ink-400">Todavía no hay complejos cargados en {city}.</p>
           )}
+          {complexes !== null && complexes.length > 0 && visibleComplexes?.length === 0 && (
+            <p className="mt-5 text-sm text-ink-400">Ya tenés como favoritos todos los complejos de {city}.</p>
+          )}
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {complexes?.map((cx) => (
+            {visibleComplexes?.map((cx) => (
               <button
                 key={cx.id}
                 disabled={saving}
