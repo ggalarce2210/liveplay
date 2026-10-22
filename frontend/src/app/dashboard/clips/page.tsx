@@ -183,7 +183,7 @@ export default function ClipsPage() {
         }
       }
 
-      const blob = new Blob(chunks, { type: response.headers.get('content-type') || 'video/mp4' });
+      const blob = new Blob(chunks as BlobPart[], { type: response.headers.get('content-type') || 'video/mp4' });
       const blobUrl = URL.createObjectURL(blob);
       const fileName = clipFileName(clip.title);
 
