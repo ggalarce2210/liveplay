@@ -20,6 +20,9 @@ interface AuthState {
   logout: () => Promise<void>;
   fetchMe: () => Promise<void>;
   setSession: (user: User, accessToken: string, refreshToken: string) => void;
+  /** Actualiza campos del user en memoria sin pegarle de nuevo a `/auth/me` — para reflejar al
+   * toque un `PATCH /users/me` (ver `ComplexGate`/`ProfilePage`) sin esperar un refetch. */
+  updateUser: (patch: Partial<User>) => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -72,5 +75,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   setSession(user, accessToken, refreshToken) {
     setTokens(accessToken, refreshToken);
     set({ user, loading: false, initialized: true });
+  },
+
+  updateUser(patch) {
+    const current = get().user;
+    if (!current) return;
+    set({ user: { ...current, ...patch } });
   },
 }));
