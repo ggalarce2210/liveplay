@@ -5,16 +5,15 @@ import clsx from 'clsx';
 export interface Filters {
   datePreset?: 'today' | 'yesterday' | 'week' | '';
   sportType?: 'FUTBOL5' | 'PADEL' | '';
-  complexId?: string;
   courtId?: string;
   timeFrom?: string;
   timeTo?: string;
 }
 
-interface ComplexOption {
+interface CourtOption {
   id: string;
   name: string;
-  courts?: { id: string; name: string }[];
+  sportType?: string;
 }
 
 const DATE_PRESETS: { value: Filters['datePreset']; label: string }[] = [
@@ -24,36 +23,28 @@ const DATE_PRESETS: { value: Filters['datePreset']; label: string }[] = [
   { value: 'week', label: 'Esta semana' },
 ];
 
+// El selector de "Complejo" vivía acá antes (2026-10-22): se sacó porque ahora el complejo se
+// elige una sola vez en el gate de `/dashboard` (`ComplexGate`) y queda fijo — este componente
+// ya solo filtra DENTRO de ese complejo (deporte, cancha, horario, fecha). Ver DashboardPage.
 export default function SearchFilters({
   filters,
   onChange,
-  complexes,
+  courts,
 }: {
   filters: Filters;
   onChange: (f: Filters) => void;
-  complexes: ComplexOption[];
+  courts: CourtOption[];
 }) {
   function update(patch: Partial<Filters>) {
     onChange({ ...filters, ...patch });
   }
 
-  // Al cambiar de deporte, la lista de complejos/canchas que llega por props cambia (se
-  // vuelve a pedir filtrada por deporte), así que la cancha/complejo elegidos antes ya no
-  // tienen por qué seguir siendo válidos.
+  // Al cambiar de deporte, la cancha elegida antes puede dejar de pertenecer a ese deporte.
   function onSportTypeChange(sportType: Filters['sportType']) {
-    update({ sportType, complexId: '', courtId: '' });
+    update({ sportType, courtId: '' });
   }
 
-  const selectedComplex = complexes.find((c) => c.id === filters.complexId);
-  const courtsOfComplex = selectedComplex?.courts ?? [];
-
-  // Si el complejo elegido tiene una sola cancha, se usa esa directamente sin pedirle al
-  // usuario que elija — el select de "Cancha" solo aparece cuando hay más de una.
-  function onComplexChange(complexId: string) {
-    const complex = complexes.find((c) => c.id === complexId);
-    const onlyCourtId = complex?.courts?.length === 1 ? complex.courts[0].id : '';
-    update({ complexId, courtId: onlyCourtId });
-  }
+  const courtsForSport = sportTypeFilter(courts, filters.sportType);
 
   return (
     <div className="card space-y-5 p-5">
@@ -78,7 +69,7 @@ export default function SearchFilters({
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div>
           <label className="label-field">Deporte</label>
           <select value={filters.sportType ?? ''} onChange={(e) => onSportTypeChange(e.target.value as Filters['sportType'])} className="input-field">
@@ -87,23 +78,12 @@ export default function SearchFilters({
             <option value="PADEL">Pádel</option>
           </select>
         </div>
-        <div>
-          <label className="label-field">Complejo</label>
-          <select value={filters.complexId ?? ''} onChange={(e) => onComplexChange(e.target.value)} className="input-field">
-            <option value="">Todos</option>
-            {complexes.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        {courtsOfComplex.length > 1 && (
+        {courtsForSport.length > 1 && (
           <div>
             <label className="label-field">Cancha</label>
             <select value={filters.courtId ?? ''} onChange={(e) => update({ courtId: e.target.value })} className="input-field">
               <option value="">Todas</option>
-              {courtsOfComplex.map((c) => (
+              {courtsForSport.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -122,4 +102,9 @@ export default function SearchFilters({
       </div>
     </div>
   );
+}
+
+function sportTypeFilter(courts: CourtOption[], sportType: Filters['sportType']): CourtOption[] {
+  if (!sportType) return courts;
+  return courts.filter((c) => c.sportType === sportType);
 }
