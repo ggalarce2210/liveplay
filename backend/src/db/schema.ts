@@ -192,6 +192,29 @@ export const videoAccessPasses = pgTable('video_access_passes', {
   externalRefIdx: index('video_access_passes_external_ref_idx').on(t.externalReference),
 }));
 
+/**
+ * Canchas favoritas de un jugador (2026-10-22, pedido del cliente: "si en el filtro pongo padel
+ * me dice que no hay nada" — con el gate de ciudad/complejo agregado el mismo día, "Mis
+ * partidos" había quedado acotado a UN solo complejo `users.homeComplexId`, así que un jugador
+ * que juega Fútbol 5 en un complejo y Pádel en otro nunca encontraba el segundo salvo que tocara
+ * "Cambiar cancha"). Reemplaza esa restricción de "un complejo fijo" por una lista: un jugador
+ * puede marcar varios complejos como favoritos, y `MatchesService.search` busca en TODOS a la
+ * vez (ver `complexIds` en `SearchMatchesDto`) — así el filtro de deporte encuentra el partido
+ * sin importar en cuál de los complejos favoritos quedó grabado. `users.homeComplexId` queda sin
+ * usar por el frontend nuevo (no se borra la columna: barato de mantener, y
+ * `UsersService.listFavoriteComplexes` migra en el momento cualquier valor viejo ahí guardado,
+ * convirtiéndolo en el primer favorito la primera vez que se consulta).
+ */
+export const userFavoriteComplexes = pgTable('user_favorite_complexes', {
+  id: id(),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  userComplexUnique: uniqueIndex('user_favorite_complexes_user_complex_idx').on(t.userId, t.complexId),
+  userIdx: index('user_favorite_complexes_user_idx').on(t.userId),
+}));
+
 export const courts = pgTable('courts', {
   id: id(),
   complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
@@ -477,6 +500,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   bookmarks: many(bookmarks),
   clips: many(clips),
   videoAccessPasses: many(videoAccessPasses),
+  favoriteComplexes: many(userFavoriteComplexes),
 }));
 
 export const complexesRelations = relations(complexes, ({ many, one }) => ({
@@ -486,6 +510,12 @@ export const complexesRelations = relations(complexes, ({ many, one }) => ({
   // OJO: a propósito NO hay una relación `mercadoPagoAccount` acá — ver el comentario grande en
   // `complexMercadoPagoAccounts` sobre por qué esa tabla se consulta siempre explícita.
   videoAccessPasses: many(videoAccessPasses),
+  favoritedBy: many(userFavoriteComplexes),
+}));
+
+export const userFavoriteComplexesRelations = relations(userFavoriteComplexes, ({ one }) => ({
+  user: one(users, { fields: [userFavoriteComplexes.userId], references: [users.id] }),
+  complex: one(complexes, { fields: [userFavoriteComplexes.complexId], references: [complexes.id] }),
 }));
 
 export const complexMercadoPagoAccountsRelations = relations(complexMercadoPagoAccounts, ({ one }) => ({
