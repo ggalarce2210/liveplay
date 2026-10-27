@@ -264,7 +264,11 @@ def build_clip(
     return trimmed
 
 
-MAFD_RE = re.compile(r"lavfi\.signalstats\.MAFD=([\d.]+)")
+# El filtro `signalstats` de FFmpeg nunca expuso una clave "MAFD" literal (confirmado
+# el 2026-10-27 en ffmpeg 8.0.1: dump completo de metadata, sin esa clave). Usamos
+# `YDIF` (diferencia de luma entre frames consecutivos), la metrica real que mide
+# "cuanto cambio la imagen" y el proxy estandar de motion detection con signalstats.
+MAFD_RE = re.compile(r"lavfi\.signalstats\.YDIF=([\d.]+)")
 
 
 def measure_motion(clip_path: Path, offset_seconds: float, duration_seconds: float) -> float | None:
@@ -281,11 +285,14 @@ def measure_motion(clip_path: Path, offset_seconds: float, duration_seconds: flo
     MOTION_CHECK_MODE en load_config, y AGENTE.md sección "Chequeo de movimiento").
     """
     cmd = [
-        "ffmpeg", "-ss", str(offset_seconds), "-t", str(duration_seconds), "-i", str(clip_path),
-        "-vf", "signalstats,metadata=print:key=lavfi.signalstats.MAFD:file=-",
+        "ffmpeg", "-nostdin", "-ss", str(offset_seconds), "-t", str(duration_seconds), "-i", str(clip_path),
+        "-vf", "signalstats,metadata=print:key=lavfi.signalstats.YDIF:file=-",
         "-f", "null", "-",
     ]
     result = run(cmd)
+    if result.returncode != 0:
+        log("agent", f"ffmpeg signalstats fallo midiendo movimiento en {clip_path}: {result.stderr[-500:]}")
+        return None
     values = [float(m) for m in MAFD_RE.findall(result.stdout)]
     if not values:
         return None
