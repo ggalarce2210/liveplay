@@ -1,8 +1,10 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger } from '@nestjs/common';
 import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { users, matches, videos, courts, cameras, clips, auditLogs } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
+import { STORAGE_DRIVER } from '../storage/storage.module';
+import { StorageDriver } from '../storage/storage.types';
 
 const DEFAULT_QUOTA_BYTES = 5 * 1024 ** 4; // 5 TB — configurable por plan/complejo en producción
 
@@ -10,7 +12,11 @@ const DEFAULT_QUOTA_BYTES = 5 * 1024 ** 4; // 5 TB — configurable por plan/com
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
-  constructor(private dbService: DbService, private videoProcessing: VideoProcessingService) {}
+  constructor(
+    private dbService: DbService,
+    private videoProcessing: VideoProcessingService,
+    @Inject(STORAGE_DRIVER) private storage: StorageDriver,
+  ) {}
   private get db() {
     return this.dbService.db;
   }
@@ -125,5 +131,66 @@ export class AdminService {
       .then((results) => this.logger.log(`Backfill de portadas terminado: ${JSON.stringify(results)}`))
       .catch((err) => this.logger.error(`Backfill de portadas falló: ${(err as Error).message}`));
     return { started: true };
+  }
+
+  /**
+   * Reconciliador de storage huérfano (2026-10-27): compara TODOS los objetos del bucket contra
+   * los `storageBaseKey` que todavía tiene algún `video` vivo en la base, y devuelve las
+   * carpetas que sobran — típicamente partidos borrados a mano ANTES de que
+   * `MatchesService.remove()` también borrara el storage (ver ese fix). Ignora a propósito
+   * cualquier objeto que no empiece con `complex-`/`court-`: los clips viven en un prefijo
+   * totalmente separado (`clips/<matchId>/<clipId>.mp4`, ver
+   * VideoProcessingService.generateClip) y NO tienen que tocarse acá — un clip sobrevive al
+   * borrado de su partido de origen a propósito (ver MatchRetentionService). Modo dry-run: no
+   * borra nada, solo informa.
+   */
+  async listOrphanVideoStorage() {
+    const allObjects = await this.storage.listAllObjects();
+    const byBaseKey = new Map<string, number>();
+    for (const obj of allObjects) {
+      const parts = obj.key.split('/');
+      if (parts.length < 7 || !parts[0].startsWith('complex-') || !parts[1].startsWith('court-')) continue;
+      const baseKey = parts.slice(0, 6).join('/');
+      byBaseKey.set(baseKey, (byBaseKey.get(baseKey) ?? 0) + obj.sizeBytes);
+    }
+
+    const liveVideos = await this.db.query.videos.findMany({ columns: { storageBaseKey: true } });
+    const liveBaseKeys = new Set(liveVideos.map((v: any) => v.storageBaseKey));
+
+    const orphans = [...byBaseKey.entries()]
+      .filter(([baseKey]) => !liveBaseKeys.has(baseKey))
+      .map(([baseKey, sizeBytes]) => ({ baseKey, sizeBytes }))
+      .sort((a, b) => b.sizeBytes - a.sizeBytes);
+
+    return {
+      orphanCount: orphans.length,
+      totalBytes: orphans.reduce((sum, o) => sum + o.sizeBytes, 0),
+      orphans,
+    };
+  }
+
+  /**
+   * Borra de verdad las carpetas que `listOrphanVideoStorage` identifica como huérfanas.
+   * Recalcula la lista fresca (no reusa un resultado cacheado de un dry-run previo) antes de
+   * borrar, por las dudas.
+   */
+  async purgeOrphanVideoStorage() {
+    const { orphans } = await this.listOrphanVideoStorage();
+    let deletedCount = 0;
+    let bytesFreed = 0;
+    const failed: { baseKey: string; error: string }[] = [];
+    for (const o of orphans) {
+      try {
+        await this.storage.deletePrefix(o.baseKey);
+        deletedCount++;
+        bytesFreed += o.sizeBytes;
+      } catch (err) {
+        failed.push({ baseKey: o.baseKey, error: (err as Error).message });
+      }
+    }
+    this.logger.log(
+      `Limpieza de storage huérfano: ${deletedCount} carpetas borradas (~${Math.round(bytesFreed / 1_000_000)} MB liberados), ${failed.length} fallidas.`,
+    );
+    return { deletedCount, bytesFreed, failed };
   }
 }

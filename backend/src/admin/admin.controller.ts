@@ -46,4 +46,28 @@ export class AdminController {
   backfillVideoPosters() {
     return this.service.backfillVideoPosters();
   }
+
+  /**
+   * Reconciliador de storage huérfano (2026-10-27, no forma parte del flujo normal): compara el
+   * bucket real contra la base y lista carpetas de video sin ningún registro vivo — restos de
+   * partidos borrados a mano antes del fix de MatchesService.remove() que ahora también limpia
+   * storage. Dry-run: no borra nada. Ver AdminService.listOrphanVideoStorage.
+   */
+  @UseGuards()
+  @Roles(Role.SUPER_ADMIN)
+  @Get('storage/orphans')
+  listOrphanStorage() {
+    return this.service.listOrphanVideoStorage();
+  }
+
+  /**
+   * Borra de verdad lo que devuelve GET /admin/storage/orphans — irreversible. Ver
+   * AdminService.purgeOrphanVideoStorage.
+   */
+  @UseGuards()
+  @Roles(Role.SUPER_ADMIN)
+  @Post('storage/orphans/purge')
+  purgeOrphanStorage() {
+    return this.service.purgeOrphanVideoStorage();
+  }
 }

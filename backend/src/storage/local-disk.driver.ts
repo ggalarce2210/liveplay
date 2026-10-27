@@ -86,4 +86,27 @@ export class LocalDiskStorageDriver implements StorageDriver {
     const token = jwt.sign({ key, contentType, put: true }, this.signingSecret, { expiresIn: expiresInSeconds });
     return `${this.publicBaseUrl}/api/storage/agent-upload/${encodeURIComponent(token)}`;
   }
+
+  async listAllObjects(): Promise<{ key: string; sizeBytes: number }[]> {
+    const out: { key: string; sizeBytes: number }[] = [];
+    const walk = async (dir: string) => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fsp.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+        } else {
+          const stat = await fsp.stat(full);
+          out.push({ key: path.relative(this.rootDir, full).split(path.sep).join('/'), sizeBytes: stat.size });
+        }
+      }
+    };
+    await walk(this.rootDir);
+    return out;
+  }
 }

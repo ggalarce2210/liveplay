@@ -40,4 +40,14 @@ export interface StorageDriver {
    * para subir esa key puntual y vence sola). Ver AgentService.createUploadPlan.
    */
   getSignedPutUrl(key: string, contentType: string, expiresInSeconds: number): Promise<string>;
+  /**
+   * Lista TODOS los objetos del storage (todo el bucket/directorio raiz, sin filtrar por
+   * prefijo), con su tamano. Pensado unicamente para el reconciliador de huerfanos de admin
+   * (ver AdminService.listOrphanVideoStorage) -- comparar contra `videos.storageBaseKey` para
+   * encontrar carpetas de video que ya no tienen ningun registro vivo en la base (por ejemplo,
+   * partidos borrados a mano antes de que `MatchesService.remove()` tambien limpiara storage).
+   * No usar para nada que corra seguido: en un bucket grande puede implicar varias paginas de
+   * `ListObjectsV2`.
+   */
+  listAllObjects(): Promise<{ key: string; sizeBytes: number }[]>;
 }

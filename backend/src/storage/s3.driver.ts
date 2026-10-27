@@ -103,4 +103,19 @@ export class S3StorageDriver implements StorageDriver {
     const command = new PutObjectCommand({ Bucket: this.bucket, Key: key, ContentType: contentType });
     return getSignedUrl(this.client, command, { expiresIn: expiresInSeconds });
   }
+
+  async listAllObjects(): Promise<{ key: string; sizeBytes: number }[]> {
+    const out: { key: string; sizeBytes: number }[] = [];
+    let continuationToken: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListObjectsV2Command({ Bucket: this.bucket, ContinuationToken: continuationToken }),
+      );
+      for (const obj of page.Contents ?? []) {
+        if (obj.Key) out.push({ key: obj.Key, sizeBytes: obj.Size ?? 0 });
+      }
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return out;
+  }
 }
