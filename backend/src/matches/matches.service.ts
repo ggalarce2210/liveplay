@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { and, asc, desc, eq, gte, inArray, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { matches, matchPlayers, teams, videos } from '../db/schema';
@@ -8,6 +8,8 @@ import { SearchMatchesDto } from './dto/search-matches.dto';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, formatInTimeZone, todayInTimeZone } from '../common/timezone';
 import { buildStorageBaseKey } from './storage-key.util';
+import { STORAGE_DRIVER } from '../storage/storage.module';
+import { StorageDriver } from '../storage/storage.types';
 
 // Decisión del cliente (2026-09-24): los partidos grabados solo quedan disponibles para ver
 // durante 1 semana (los clips generados a partir de ellos NO tienen este límite — ver
@@ -23,6 +25,7 @@ export class MatchesService {
     private dbService: DbService,
     private videoProcessing: VideoProcessingService,
     private streamTokens: StreamTokenService,
+    @Inject(STORAGE_DRIVER) private storage: StorageDriver,
   ) {}
   private get db() {
     return this.dbService.db;
@@ -188,7 +191,24 @@ export class MatchesService {
     return updated;
   }
 
+  /**
+   * Borra un partido a mano desde el panel de admin (boton "Eliminar partido"). Hasta el
+   * 2026-10-27 esto solo borraba la fila de `matches` (cascada en la base a videos/segments/etc)
+   * sin tocar el archivo real en storage -- dejaba el video huerfano en R2 para siempre. Ahora
+   * sigue el mismo criterio que `MatchRetentionService.purgeExpiredMatches()`: un solo
+   * `deletePrefix` sobre `storageBaseKey` se lleva puesto todo lo que tenga adentro (manifest
+   * HLS, segmentos, poster, sprite/vtt de miniaturas). Si el storage falla, no se borra el
+   * registro del partido (para no perder la referencia a un video a medio borrar) -- el admin ve
+   * el error en el banner de la UI y puede reintentar.
+   */
   async remove(id: string) {
+    const video = await this.db.query.videos.findFirst({
+      where: eq(videos.matchId, id),
+      columns: { storageBaseKey: true },
+    });
+    if (video) {
+      await this.storage.deletePrefix(video.storageBaseKey);
+    }
     const [deleted] = await this.db.delete(matches).where(eq(matches.id, id)).returning();
     return deleted;
   }
