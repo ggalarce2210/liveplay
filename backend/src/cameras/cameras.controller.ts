@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -12,9 +12,14 @@ import { Audit } from '../common/interceptors/audit-log.interceptor';
 export class CamerasController {
   constructor(private service: CamerasService) {}
 
+  /**
+   * Bug real encontrado 2026-11-01: esto devolvía TODAS las cámaras de TODOS los complejos
+   * (con su `rtspUrl`) a cualquier `COMPLEX_ADMIN`, no solo las del complejo que administra —
+   * ver `CamerasService.list` para el filtro por `managedComplexId`.
+   */
   @Get()
-  list() {
-    return this.service.list();
+  list(@Req() req: any) {
+    return this.service.list(req.user);
   }
 
   @Audit('CAMERA_CREATE', 'Camera')

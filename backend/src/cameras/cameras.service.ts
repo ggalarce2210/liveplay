@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { cameras } from '../db/schema';
 import { ImouCloudClient } from './imou-cloud.client';
+import { Role } from '../common/roles';
 
 @Injectable()
 export class CamerasService {
@@ -15,8 +16,19 @@ export class CamerasService {
     return this.dbService.db;
   }
 
-  list() {
-    return this.db.query.cameras.findMany({ with: { court: { with: { complex: true } } } });
+  /**
+   * `user` viene de `req.user` (ver `CamerasController.list`) — puede faltar solo en llamadas
+   * internas sin HTTP de por medio. Un `COMPLEX_ADMIN` solo puede ver las cámaras de su propio
+   * complejo (`managedComplexId`, viaja en el JWT desde `AuthService.issueTokens`); un
+   * `SUPER_ADMIN` sigue viendo todas, igual que antes. El filtro se aplica en memoria (mismo
+   * criterio que `ComplexesService.list` con `sportType`): a esta escala es instantáneo y evita
+   * tener que repetir a mano el `with` anidado en un `where` por columna relacionada.
+   */
+  list(user?: { role?: string; managedComplexId?: string | null }) {
+    return this.db.query.cameras.findMany({ with: { court: { with: { complex: true } } } }).then((all) => {
+      if (user?.role !== Role.COMPLEX_ADMIN) return all;
+      return all.filter((camera) => camera.court?.complex?.id === user.managedComplexId);
+    });
   }
 
   async create(data: any) {

@@ -31,9 +31,15 @@ export class AuthService {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
 
-  private async issueTokens(user: { id: string; email: string; role: string }) {
+  private async issueTokens(user: { id: string; email: string; role: string; managedComplexId?: string | null }) {
+    // `managedComplexId` viaja en el token (bug real encontrado 2026-11-01: un COMPLEX_ADMIN
+    // veía TODOS los complejos/cámaras en el panel, no solo el suyo) para que los endpoints que
+    // acotan por complejo (ComplexesController, CamerasController) no necesiten una consulta a
+    // la base en cada request. Como `refresh()` siempre relee el usuario de la base y vuelve a
+    // llamar a este método, una sesión vieja (access token sin este campo) lo recibe solo con
+    // esperar a su próximo refresh automático (TTL de 15 minutos) — no hace falta re-loguearse.
     const accessToken = this.jwt.sign(
-      { sub: user.id, email: user.email, role: user.role },
+      { sub: user.id, email: user.email, role: user.role, managedComplexId: user.managedComplexId ?? null },
       { secret: this.config.get('JWT_ACCESS_SECRET', 'dev-access-secret-change-me'), expiresIn: ACCESS_TOKEN_TTL },
     );
     const refreshTokenRaw = crypto.randomBytes(48).toString('hex');

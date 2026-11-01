@@ -37,9 +37,16 @@ export class ComplexesService {
    * `with` no soporta condicionar el include por una columna de la tabla relacionada; a la
    * escala de "complejos por ciudad" esto es instantáneo (mismo criterio que en matches.service).
    */
-  async list(filters: { city?: string; sportType?: SportType } = {}) {
+  async list(filters: { city?: string; sportType?: SportType; onlyComplexId?: string } = {}) {
     const all = await this.db.query.complexes.findMany({
-      where: filters.city ? ilike(complexes.city, `%${filters.city}%`) : undefined,
+      // `onlyComplexId` (puesto por ComplexesController cuando el que llama es un
+      // COMPLEX_ADMIN) pisa el filtro de ciudad del buscador público — un admin de complejo
+      // nunca necesita buscar por ciudad, solo ve el suyo.
+      where: filters.onlyComplexId
+        ? eq(complexes.id, filters.onlyComplexId)
+        : filters.city
+          ? ilike(complexes.city, `%${filters.city}%`)
+          : undefined,
       with: { courts: true, subscription: true },
       orderBy: [asc(complexes.name)],
     });
@@ -65,10 +72,28 @@ export class ComplexesService {
     return (rows.map((r) => r.city).filter(Boolean) as string[]).sort((a, b) => a.localeCompare(b));
   }
 
+  /**
+   * Esta ruta es pública (sin JWT, ver ComplexesController.get) — a propósito, para que
+   * cualquiera pueda ver el detalle de un complejo desde el buscador. Bug real encontrado
+   * 2026-11-01: el `with: { camera: true }` traía la cámara COMPLETA, incluyendo `rtspUrl`,
+   * `agentKeyHash` y (durante la ventana de 10 min de un código de enrolamiento activo)
+   * `pendingAgentToken` en texto plano — es decir, cualquiera sin loguearse podía leer
+   * credenciales reales del agente de cualquier complejo. Se restringe a columnas que de verdad
+   * hacen falta en una vista pública (nombre/tipo/estado), nunca las de acceso a la cámara.
+   */
   get(id: string) {
     return this.db.query.complexes.findFirst({
       where: eq(complexes.id, id),
-      with: { courts: { with: { camera: true } }, subscription: true },
+      with: {
+        courts: {
+          with: {
+            camera: {
+              columns: { id: true, courtId: true, name: true, type: true, status: true, lastSeenAt: true },
+            },
+          },
+        },
+        subscription: true,
+      },
     });
   }
 
