@@ -7,6 +7,7 @@ import { useAuthStore } from '@/lib/auth-store';
 import { ApiError, api } from '@/lib/api';
 import LogoMark from '@/components/LogoMark';
 import IntroSplash from '@/components/IntroSplash';
+import HomeAuthRedirect from '@/components/HomeAuthRedirect';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -54,6 +55,7 @@ export default function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-ink-950 px-6">
+      <HomeAuthRedirect />
       {showIntro && <IntroSplash onDone={() => setShowIntro(false)} />}
 
       <div className="w-full max-w-md">
