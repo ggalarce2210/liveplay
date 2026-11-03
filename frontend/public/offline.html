@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LivePlay — Sin conexión</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        background: #06070a;
+        color: #e4e7ec;
+        font-family: -apple-system, system-ui, 'Segoe UI', Roboto, sans-serif;
+      }
+      .wrap {
+        min-height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        padding: 24px;
+        text-align: center;
+      }
+      .badge {
+        width: 56px;
+        height: 56px;
+        border-radius: 16px;
+        background: linear-gradient(135deg, #2f9a52, #0d2e19);
+      }
+      h1 { font-size: 1.15rem; margin: 0; }
+      p { margin: 0; color: #8890a0; font-size: 0.9rem; max-width: 320px; }
+      button {
+        margin-top: 8px;
+        padding: 10px 20px;
+        border-radius: 999px;
+        border: none;
+        background: #2f9a52;
+        color: #06070a;
+        font-weight: 600;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="badge"></div>
+      <h1>Sin conexión</h1>
+      <p>No pudimos cargar esta página porque no hay internet en este momento. Probá de nuevo cuando vuelva la conexión.</p>
+      <button onclick="location.reload()">Reintentar</button>
+    </div>
+  </body>
+</html>
