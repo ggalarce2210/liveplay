@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import LogoMark from '@/components/LogoMark';
 import CourtExplorer from '@/components/CourtExplorer';
+import HomeAuthRedirect from '@/components/HomeAuthRedirect';
 
 const FEATURES = [
   { icon: '⚽', title: 'Fútbol 5', desc: 'Goles, tarjetas y jugadas asociadas al minuto exacto del video de tu partido.' },
@@ -16,6 +17,7 @@ const FEATURES = [
 export default function LandingPage() {
   return (
     <main className="min-h-screen bg-ink-950">
+      <HomeAuthRedirect />
       <div
         className="pointer-events-none fixed inset-0 opacity-60"
         style={{
