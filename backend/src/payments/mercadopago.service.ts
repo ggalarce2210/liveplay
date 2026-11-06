@@ -75,11 +75,14 @@ export class MercadopagoService {
     return value;
   }
 
-  /** Base pública del backend TAL COMO la usan stream-token.service.ts/agent-enroll.controller.ts
-   * — ojo, hay que agregar "/api" a mano (ver el bug histórico documentado en esos archivos: el
-   * valor de API_PUBLIC_URL en sí nunca lo incluye). */
+  /** Base pública del backend. BUG encontrado 2026-11-06 (mismo patrón que el documentado en
+   * stream.controller.ts/stream-token.service.ts): el 2026-10-20 se corrigió `API_PUBLIC_URL` en
+   * Render para que YA incluya el sufijo "/api", pero este getter seguía agregando su propio
+   * "/api" encima, generando un `redirect_uri` de OAuth y un `notification_url` de webhook con
+   * "/api/api/..." — Mercado Pago rechazaba la vinculación porque esa URL nunca coincide con la
+   * registrada en la app. Fix: no agregar "/api" de nuevo (igual que los otros dos archivos). */
   private get apiBaseUrl() {
-    return `${this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001')}/api`;
+    return this.config.get<string>('API_PUBLIC_URL', 'http://localhost:3001/api');
   }
   private get appBaseUrl() {
     return this.config.get<string>('APP_PUBLIC_URL', 'http://localhost:3000');
