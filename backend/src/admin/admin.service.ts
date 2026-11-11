@@ -5,6 +5,7 @@ import { users, matches, videos, courts, cameras, clips, auditLogs } from '../db
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 import { STORAGE_DRIVER } from '../storage/storage.module';
 import { StorageDriver } from '../storage/storage.types';
+import { Role } from '../common/roles';
 
 const DEFAULT_QUOTA_BYTES = 5 * 1024 ** 4; // 5 TB — configurable por plan/complejo en producción
 
@@ -21,7 +22,21 @@ export class AdminService {
     return this.dbService.db;
   }
 
-  async getStats(complexId?: string) {
+  /**
+   * Bug real encontrado 2026-11-11: `getStats`/`getAllVideos` confiaban en el `complexId` que
+   * mandaba el QUERY STRING sin verificar que el que llama tenga permiso sobre ESE complejo — un
+   * `COMPLEX_ADMIN` podía pedir el de cualquier otro (o ni mandar el parámetro, trayendo TODO) y
+   * ver estadísticas/videos de un negocio ajeno. Mismo criterio que ya usa `CamerasService.list`:
+   * para un `COMPLEX_ADMIN` se ignora lo que haya mandado el cliente y se fuerza siempre su propio
+   * `managedComplexId`; un `SUPER_ADMIN` (o una llamada interna sin `user`) sigue sin acotar.
+   */
+  private effectiveComplexId(complexId: string | undefined, user?: { role?: string; managedComplexId?: string | null }) {
+    if (user?.role === Role.COMPLEX_ADMIN) return user.managedComplexId ?? '__none__';
+    return complexId;
+  }
+
+  async getStats(complexId?: string, user?: { role?: string; managedComplexId?: string | null }) {
+    complexId = this.effectiveComplexId(complexId, user);
     const matchWhere = complexId ? eq(matches.complexId, complexId) : undefined;
 
     const [allUsers, allMatches, readyVideos, activeCourts, allCameras, allClips] = await Promise.all([
@@ -101,7 +116,8 @@ export class AdminService {
    * agrupamiento en sí se hace del lado del cliente (mismo criterio que ya usa esta clase en
    * `getStats`, que filtra por complexId en JS en vez de armar un WHERE con join).
    */
-  async getAllVideos(complexId?: string) {
+  async getAllVideos(complexId?: string, user?: { role?: string; managedComplexId?: string | null }) {
+    complexId = this.effectiveComplexId(complexId, user);
     const allMatches = await this.db.query.matches.findMany({
       where: complexId ? eq(matches.complexId, complexId) : undefined,
       with: {

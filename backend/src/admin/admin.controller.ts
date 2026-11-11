@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -11,20 +11,39 @@ import { AdminService } from './admin.service';
 export class AdminController {
   constructor(private service: AdminService) {}
 
+  /**
+   * Bug real encontrado 2026-11-11 (mismo patrón que el ya corregido en CamerasService.list y
+   * ComplexesController el 2026-11-01): esto no acotaba por el complejo del `COMPLEX_ADMIN` que
+   * llama — cualquier admin de complejo podía pedir `?complexId=<otro-complejo>` (o ni siquiera
+   * mandar el parámetro) y ver las estadísticas de un negocio ajeno. Se pasa `req.user` para que
+   * `AdminService.getStats` fuerce el acotado para `COMPLEX_ADMIN`, igual que ya hace
+   * `CamerasService.list`.
+   */
   @Get('stats')
-  stats(@Query('complexId') complexId?: string) {
-    return this.service.getStats(complexId);
+  stats(@Req() req: any, @Query('complexId') complexId?: string) {
+    return this.service.getStats(complexId, req.user);
   }
 
+  /** Uso de storage de TODA la plataforma — no tiene noción de "complejo", es un dato
+   * operativo/de facturación de la plataforma entera, así que queda restringido a SUPER_ADMIN
+   * (mismo criterio que storage/orphans más abajo) en vez de intentar acotarlo. */
+  @UseGuards()
+  @Roles(Role.SUPER_ADMIN)
   @Get('storage')
   storage() {
     return this.service.getStorage();
   }
 
-  /** Listado completo de videos agrupables por complejo/cancha/cámara — ver AdminService.getAllVideos. */
+  /**
+   * Bug real encontrado 2026-11-11 (reportado en vivo por un COMPLEX_ADMIN que, parado en "Videos
+   * por cámara" de SU complejo, veía y podía reproducir los videos de OTRO complejo): mismo
+   * patrón que el ya corregido en CamerasService.list — esto devolvía los videos de TODOS los
+   * complejos a cualquier COMPLEX_ADMIN, ignorando `managedComplexId`. Ver
+   * AdminService.getAllVideos para el acotado.
+   */
   @Get('videos')
-  videos(@Query('complexId') complexId?: string) {
-    return this.service.getAllVideos(complexId);
+  videos(@Req() req: any, @Query('complexId') complexId?: string) {
+    return this.service.getAllVideos(complexId, req.user);
   }
 
   @UseGuards()
