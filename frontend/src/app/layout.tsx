@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { ServiceWorkerRegister } from './sw-register';
+import InstallAppBanner from '@/components/InstallAppBanner';
 
 export const metadata: Metadata = {
   title: 'LivePlay — Jugá. Grabá. Reviví.',
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         {children}
         <ServiceWorkerRegister />
+        <InstallAppBanner />
       </body>
     </html>
   );
