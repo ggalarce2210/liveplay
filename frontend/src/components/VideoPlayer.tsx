@@ -8,7 +8,6 @@ import { parseThumbnailVtt, ThumbnailCue } from '@/lib/vtt';
 import { formatClock } from '@/lib/format';
 
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2, 4, 8];
-const REPLAY_STEPS = [-30, -10, -5, 5, 10, 30];
 
 export interface VideoPlayerHandle {
   seek: (time: number) => void;
@@ -112,11 +111,6 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
     const video = videoRef.current;
     if (!video) return;
     video.currentTime = Math.max(0, Math.min(duration, t));
-  }
-
-  function handleReplay() {
-    seekBy(-10);
-    videoRef.current?.play();
   }
 
   function changeSpeed(s: number) {
@@ -240,22 +234,10 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
           </div>
         </div>
 
-        {/* Replay / saltos rápidos (§8) */}
+        {/* Los botones -30s/-10s/-5s/REPLAY/+5s/+10s/+30s se sacaron (2026-11-14, pedido del
+            usuario): en el celular empujaban "Crear clip" muy abajo. Para moverse alcanza con la
+            barra; en compu siguen las flechas del teclado (±5s). */}
         <div className="flex flex-wrap items-center gap-2">
-          {REPLAY_STEPS.slice(0, 3).map((s) => (
-            <button key={s} onClick={() => seekBy(s)} className="btn-secondary !px-3 !py-1.5 text-xs">
-              {s}s
-            </button>
-          ))}
-          <button onClick={handleReplay} className="btn-primary !px-4 !py-1.5 text-xs">
-            ⟲ REPLAY
-          </button>
-          {REPLAY_STEPS.slice(3).map((s) => (
-            <button key={s} onClick={() => seekBy(s)} className="btn-secondary !px-3 !py-1.5 text-xs">
-              +{s}s
-            </button>
-          ))}
-
           <div className="ml-auto flex items-center gap-2">
             {bookmarkDraft === null ? (
               <button onClick={() => setBookmarkDraft('')} className="btn-secondary !px-3 !py-1.5 text-xs">
