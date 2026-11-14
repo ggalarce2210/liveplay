@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { and, asc, eq, gte, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
-import { matches } from '../db/schema';
+import { complexes, courts, matches } from '../db/schema';
 import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, formatInTimeZone, todayInTimeZone } from '../common/timezone';
 
 export interface PublicMatchesQuery {
@@ -31,6 +31,14 @@ export class DiscoveryService {
 
   async matchesByCourt(query: PublicMatchesQuery) {
     if (!query.courtId) throw new BadRequestException('Falta courtId');
+
+    // Buscador público: una cancha de un complejo "a prueba" (isPublic=false) no muestra nada.
+    const [court] = await this.db
+      .select({ isPublic: complexes.isPublic })
+      .from(courts)
+      .innerJoin(complexes, eq(complexes.id, courts.complexId))
+      .where(eq(courts.id, query.courtId));
+    if (!court || !court.isPublic) return [];
     const conditions = [eq(matches.courtId, query.courtId)];
 
     // Mismo huso horario que usa el resto del cliente (ver DEFAULT_TIMEZONE) — "hoy"/"ayer" acá

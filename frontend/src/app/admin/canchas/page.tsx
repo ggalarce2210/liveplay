@@ -191,7 +191,10 @@ export default function CanchasAdminPage() {
                       c.id === selectedComplexId ? 'bg-pitch-500/15 text-pitch-400' : 'text-ink-300 hover:bg-ink-800/60 hover:text-white',
                     )}
                   >
-                    <span className="block font-medium">{c.name}</span>
+                    <span className="block font-medium">
+                      {c.name}
+                      {c.isPublic === false && <span className="ml-2 rounded bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-400">Oculto</span>}
+                    </span>
                     {c.city && <span className="block text-xs text-ink-400">{c.city}</span>}
                   </button>
                 ))}
@@ -227,6 +230,8 @@ export default function CanchasAdminPage() {
                     </div>
                     {deleteComplexError && <p className="mt-2 text-xs text-red-400">{deleteComplexError}</p>}
                   </div>
+
+                  <VisibilityCard complex={selectedComplex} onChanged={loadComplexes} />
 
                   <Suspense fallback={null}>
                     <VideoAccessSettingsCard complex={selectedComplex} onChanged={loadComplexes} />
@@ -269,6 +274,49 @@ export default function CanchasAdminPage() {
         </div>
       </AppShell>
     </AuthGuard>
+  );
+}
+
+/**
+ * Visible al público (2026-11-14): un complejo "a prueba" queda oculto para visitantes y
+ * jugadores (buscador, selector de complejos, Mis partidos). Los admins lo siguen viendo, así
+ * que se puede probar la cámara y los videos antes de abrirlo a la gente.
+ */
+function VisibilityCard({ complex, onChanged }: { complex: Complex; onChanged: () => Promise<void> | void }) {
+  const isPublic = complex.isPublic !== false;
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function toggle() {
+    setSaving(true);
+    setError(null);
+    try {
+      await api.patch(`/complexes/${complex.id}`, { isPublic: !isPublic });
+      await onChanged();
+    } catch (err) {
+      setError(errorMessage(err, 'No pudimos cambiar la visibilidad del complejo'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card flex flex-wrap items-center justify-between gap-4 p-5">
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-white">
+          {isPublic ? '👁 Visible al público' : '🙈 Oculto: complejo a prueba'}
+        </h3>
+        <p className="mt-1 text-xs text-ink-400">
+          {isPublic
+            ? 'Aparece en el buscador y los jugadores ven sus partidos.'
+            : 'No aparece en el buscador ni en Mis partidos de los jugadores. Solo lo ven los administradores.'}
+        </p>
+        {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      </div>
+      <button type="button" className={isPublic ? 'btn-secondary' : 'btn-primary'} onClick={toggle} disabled={saving}>
+        {saving ? 'Guardando...' : isPublic ? 'Ocultar (poner a prueba)' : 'Publicar complejo'}
+      </button>
+    </div>
   );
 }
 

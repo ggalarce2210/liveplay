@@ -29,6 +29,8 @@ export interface Complex {
   chargesForVideoAccess?: boolean;
   videoAccessPriceArs?: number | null;
   videoAccessPassDays?: number | null;
+  /** false = complejo "a prueba": oculto para visitantes y jugadores (solo lo ven los admins). */
+  isPublic?: boolean;
 }
 
 /** Estado de conexión de la cuenta de Mercado Pago del complejo (GET .../mercadopago/status). */

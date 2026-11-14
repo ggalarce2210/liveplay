@@ -37,16 +37,19 @@ export class ComplexesService {
    * `with` no soporta condicionar el include por una columna de la tabla relacionada; a la
    * escala de "complejos por ciudad" esto es instantáneo (mismo criterio que en matches.service).
    */
-  async list(filters: { city?: string; sportType?: SportType; onlyComplexId?: string } = {}) {
+  async list(filters: { city?: string; sportType?: SportType; onlyComplexId?: string; publicOnly?: boolean } = {}) {
+    const cityFilter = filters.city ? ilike(complexes.city, `%${filters.city}%`) : undefined;
     const all = await this.db.query.complexes.findMany({
       // `onlyComplexId` (puesto por ComplexesController cuando el que llama es un
       // COMPLEX_ADMIN) pisa el filtro de ciudad del buscador público — un admin de complejo
       // nunca necesita buscar por ciudad, solo ve el suyo.
+      // `publicOnly` (visitantes y jugadores): los complejos "a prueba" (isPublic=false) no se
+      // listan — ver `complexes.isPublic` en schema.ts.
       where: filters.onlyComplexId
         ? eq(complexes.id, filters.onlyComplexId)
-        : filters.city
-          ? ilike(complexes.city, `%${filters.city}%`)
-          : undefined,
+        : filters.publicOnly
+          ? and(eq(complexes.isPublic, true), cityFilter)
+          : cityFilter,
       with: { courts: true, subscription: true },
       orderBy: [asc(complexes.name)],
     });
@@ -60,14 +63,17 @@ export class ComplexesService {
 
   /** Ciudades con al menos un complejo (y, si se filtra por deporte, con al menos una cancha
    * de ese deporte) — alimenta el paso "elegí tu ciudad" del buscador. */
-  async cities(sportType?: SportType): Promise<string[]> {
+  async cities(sportType?: SportType, includeHidden = false): Promise<string[]> {
+    // Sin `includeHidden` (visitantes y jugadores) una ciudad que solo tiene complejos "a prueba"
+    // no aparece.
+    const visible = includeHidden ? undefined : eq(complexes.isPublic, true);
     const rows = sportType
       ? await this.db
           .selectDistinct({ city: complexes.city })
           .from(complexes)
           .innerJoin(courts, eq(courts.complexId, complexes.id))
-          .where(and(isNotNull(complexes.city), eq(courts.sportType, sportType)))
-      : await this.db.selectDistinct({ city: complexes.city }).from(complexes).where(isNotNull(complexes.city));
+          .where(and(isNotNull(complexes.city), eq(courts.sportType, sportType), visible))
+      : await this.db.selectDistinct({ city: complexes.city }).from(complexes).where(and(isNotNull(complexes.city), visible));
 
     return (rows.map((r) => r.city).filter(Boolean) as string[]).sort((a, b) => a.localeCompare(b));
   }

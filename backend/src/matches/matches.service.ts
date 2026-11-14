@@ -1,7 +1,7 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
 import { and, asc, desc, eq, gte, inArray, lt, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
-import { matches, matchPlayers, teams, videos } from '../db/schema';
+import { complexes, matches, matchPlayers, teams, videos } from '../db/schema';
 import { VideoProcessingService } from '../video-processing/video-processing.service';
 import { StreamTokenService } from '../storage/stream-token.service';
 import { SearchMatchesDto } from './dto/search-matches.dto';
@@ -10,6 +10,10 @@ import { DEFAULT_TIMEZONE, addDaysToDateStr, addMonthsToDateStr, dayRangeUtc, fo
 import { buildStorageBaseKey } from './storage-key.util';
 import { STORAGE_DRIVER } from '../storage/storage.module';
 import { StorageDriver } from '../storage/storage.types';
+
+function isAdminRole(role: string | undefined) {
+  return role === 'SUPER_ADMIN' || role === 'COMPLEX_ADMIN';
+}
 
 // Decisión del cliente (2026-09-24): los partidos grabados solo quedan disponibles para ver
 // durante 1 semana (los clips generados a partir de ellos NO tienen este límite — ver
@@ -64,6 +68,13 @@ export class MatchesService {
     }
     if (query.courtId) conditions.push(eq(matches.courtId, query.courtId));
     if (query.sportType) conditions.push(eq(matches.sportType, query.sportType));
+
+    // Complejos "a prueba" (isPublic=false, ver schema.ts): un jugador no ve sus partidos.
+    if (!isAdminRole(requester.role)) {
+      conditions.push(
+        inArray(matches.complexId, this.db.select({ id: complexes.id }).from(complexes).where(eq(complexes.isPublic, true))),
+      );
+    }
 
     // Mismo huso horario que usa el resto del cliente (ver DEFAULT_TIMEZONE) — "hoy"/"ayer" acá
     // significan el día de calendario tal como lo vive el complejo, no el día UTC del servidor
@@ -162,6 +173,10 @@ export class MatchesService {
       },
     });
     if (!match) throw new NotFoundException('Partido no encontrado');
+    // Complejo "a prueba": para un jugador es como si el partido no existiera.
+    if (match.complex && match.complex.isPublic === false && !isAdminRole(requester.role)) {
+      throw new NotFoundException('Partido no encontrado');
+    }
     return this.withPosterUrl(match);
   }
 

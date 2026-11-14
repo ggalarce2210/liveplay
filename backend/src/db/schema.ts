@@ -125,6 +125,12 @@ export const complexes = pgTable('complexes', {
   videoAccessPriceArs: doublePrecision('video_access_price_ars'),
   /** Cuántos días dura el pase una vez acreditado el pago. Null si el complejo no cobra. */
   videoAccessPassDays: integer('video_access_pass_days'),
+  /**
+   * Visible al público (2026-11-14): en false el complejo queda "a prueba" — no aparece en el
+   * buscador público, ni en el selector de complejos, ni sus partidos para los jugadores.
+   * Los admins (SUPER_ADMIN y el COMPLEX_ADMIN de ese complejo) lo siguen viendo todo.
+   */
+  isPublic: boolean('is_public').notNull().default(true),
   ...timestamps,
 }, (t) => ({
   cityIdx: index('complexes_city_idx').on(t.city),

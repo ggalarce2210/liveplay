@@ -26,14 +26,17 @@ export class ComplexesController {
   @Get()
   list(@Req() req: any, @Query('city') city?: string, @Query('sportType') sportType?: 'FUTBOL5' | 'PADEL') {
     const onlyComplexId = this.getScopedComplexId(req) ?? undefined;
-    return this.service.list({ city, sportType, onlyComplexId });
+    // Complejos "a prueba" (isPublic=false): solo los ve un admin. El COMPLEX_ADMIN ya queda
+    // acotado a su propio complejo arriba; el SUPER_ADMIN ve todos.
+    const publicOnly = !this.isAdmin(req);
+    return this.service.list({ city, sportType, onlyComplexId, publicOnly });
   }
 
   /** Alimenta el paso "elegí tu ciudad" del buscador — debe ir antes de ":id" para que
    * "cities" no se interprete como un id de complejo. */
   @Get('cities')
-  cities(@Query('sportType') sportType?: 'FUTBOL5' | 'PADEL') {
-    return this.service.cities(sportType);
+  cities(@Req() req: any, @Query('sportType') sportType?: 'FUTBOL5' | 'PADEL') {
+    return this.service.cities(sportType, this.isAdmin(req));
   }
 
   /** Mismo acotado que en `list()`: un COMPLEX_ADMIN no puede pedir el detalle de un complejo
@@ -54,13 +57,23 @@ export class ComplexesController {
    * ruta sigue pública/sin acotar, igual que antes de este fix.
    */
   private getScopedComplexId(req: any): string | null {
+    const payload = this.decodeToken(req);
+    return payload?.role === Role.COMPLEX_ADMIN ? payload.managedComplexId ?? null : null;
+  }
+
+  /** true si quien llama es SUPER_ADMIN o COMPLEX_ADMIN (con un JWT válido). */
+  private isAdmin(req: any): boolean {
+    const role = this.decodeToken(req)?.role;
+    return role === Role.SUPER_ADMIN || role === Role.COMPLEX_ADMIN;
+  }
+
+  private decodeToken(req: any): any | null {
     const header = req?.headers?.authorization as string | undefined;
     if (!header?.startsWith('Bearer ')) return null;
     try {
-      const payload: any = this.jwt.verify(header.slice('Bearer '.length), {
+      return this.jwt.verify(header.slice('Bearer '.length), {
         secret: this.config.get('JWT_ACCESS_SECRET', 'dev-access-secret-change-me'),
       });
-      return payload?.role === Role.COMPLEX_ADMIN ? payload.managedComplexId ?? null : null;
     } catch {
       return null;
     }
