@@ -304,6 +304,9 @@ export const matches = pgTable('matches', {
 }, (t) => ({
   complexDateIdx: index('matches_complex_date_idx').on(t.complexId, t.date),
   courtDateIdx: index('matches_court_date_idx').on(t.courtId, t.date),
+  // Un solo turno por cancha y horario (2026-11-15): el 10/11 se generaron por duplicado 77
+  // turnos de "Los Pinos" y el agente subía cada video dos veces. Con esto la base lo impide.
+  courtStartUnique: uniqueIndex('matches_court_start_unique').on(t.courtId, t.startTime),
   sportDateIdx: index('matches_sport_date_idx').on(t.sportType, t.date),
 }));
 

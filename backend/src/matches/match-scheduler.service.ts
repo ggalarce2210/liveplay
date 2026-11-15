@@ -181,8 +181,10 @@ export class MatchSchedulerService {
       }));
 
     if (toInsert.length === 0) return 0;
-    await this.db.insert(matches).values(toInsert);
-    return toInsert.length;
+    // onConflictDoNothing: si otra vuelta (cron + guardado del horario a la vez) ya insertó el
+    // mismo turno, el índice único `matches_court_start_unique` lo frena sin romper el resto.
+    const inserted = await this.db.insert(matches).values(toInsert).onConflictDoNothing().returning({ id: matches.id });
+    return inserted.length;
   }
 
   /**
