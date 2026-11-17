@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
 import { and, eq, gte, lte } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
-import { complexes, complexMercadoPagoAccounts, users, videoAccessPasses } from '../db/schema';
+import { complexes, complexMercadoPagoAccounts, matches, users, videoAccessPasses } from '../db/schema';
 import { AuthUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../common/roles';
 
@@ -258,6 +258,11 @@ export class MercadopagoService {
       throw new BadRequestException('Este complejo no tiene configurado el cobro por ver videos');
     }
 
+    // Desde 2026-11-17 se paga un partido puntual, no un pase por complejo.
+    if (!returnMatchId) throw new BadRequestException('Falta el partido a pagar');
+    const match = await this.db.query.matches.findFirst({ where: eq(matches.id, returnMatchId) });
+    if (!match || match.complexId !== complexId) throw new NotFoundException('Partido no encontrado');
+
     const accessToken = await this.getValidAccessToken(complexId);
     const externalReference = randomUUID();
 
@@ -266,6 +271,7 @@ export class MercadopagoService {
       .values({
         complexId,
         userId: requester.userId,
+        matchId: match.id,
         status: 'PENDING',
         amountArs: complex.videoAccessPriceArs,
         passDaysSnapshot: complex.videoAccessPassDays,
@@ -286,7 +292,7 @@ export class MercadopagoService {
           items: [
             {
               id: pass.id,
-              title: `Acceso a videos de ${complex.name} (${complex.videoAccessPassDays} días)`,
+              title: `Video de tu partido en ${complex.name}`,
               quantity: 1,
               currency_id: 'ARS',
               unit_price: complex.videoAccessPriceArs,

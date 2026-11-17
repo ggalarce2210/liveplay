@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { and, eq, gt } from 'drizzle-orm';
+import { and, eq, gt, isNull, or } from 'drizzle-orm';
 import { DbService } from '../db/db.service';
 import { complexes, videoAccessPasses } from '../db/schema';
 
@@ -30,14 +30,25 @@ export class VideoAccessService {
     };
   }
 
-  /** true si `userId` tiene HOY un pase vigente (pago acreditado y no vencido) para ese complejo. */
-  async hasActivePass(complexId: string, userId: string): Promise<boolean> {
+  /**
+   * true si `userId` pagó ESE partido (2026-11-17: el pago desbloquea solo el video comprado,
+   * no todos los del complejo). Un pago por partido no vence: el video en sí se purga a los 7
+   * días, y los clips que el jugador haga de él quedan suyos.
+   *
+   * Los pases viejos por complejo (`matchId` null, vendidos antes de este cambio) se siguen
+   * respetando hasta su `expiresAt`, para no quitarle a nadie algo que ya pagó.
+   */
+  async hasAccessToMatch(complexId: string, matchId: string | null | undefined, userId: string): Promise<boolean> {
+    const legacyComplexPass = and(
+      isNull(videoAccessPasses.matchId),
+      eq(videoAccessPasses.complexId, complexId),
+      gt(videoAccessPasses.expiresAt, new Date()),
+    );
     const active = await this.db.query.videoAccessPasses.findFirst({
       where: and(
-        eq(videoAccessPasses.complexId, complexId),
         eq(videoAccessPasses.userId, userId),
         eq(videoAccessPasses.status, 'APPROVED'),
-        gt(videoAccessPasses.expiresAt, new Date()),
+        matchId ? or(eq(videoAccessPasses.matchId, matchId), legacyComplexPass) : legacyComplexPass,
       ),
     });
     return !!active;

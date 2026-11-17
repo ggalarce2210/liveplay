@@ -89,12 +89,13 @@ export class ShareController {
     const complex = link.match?.complex ?? link.clip?.match?.complex;
     if (complex?.chargesForVideoAccess) {
       const isAdmin = requester?.role === Role.SUPER_ADMIN || requester?.role === Role.COMPLEX_ADMIN;
-      const hasAccess = isAdmin || (requester ? await this.videoAccess.hasActivePass(complex.id, requester.userId) : false);
+      const sharedMatchId = link.match?.id ?? link.clip?.match?.id;
+      const hasAccess = isAdmin || (requester ? await this.videoAccess.hasAccessToMatch(complex.id, sharedMatchId, requester.userId) : false);
       if (!hasAccess) {
         throw new HttpException(
           {
             code: 'PAYMENT_REQUIRED',
-            message: 'Necesitás un pase vigente para este complejo para ver este contenido.',
+            message: 'Necesitás pagar este partido para ver este contenido.',
             complexId: complex.id,
             priceArs: complex.videoAccessPriceArs,
             passDays: complex.videoAccessPassDays,

@@ -433,7 +433,7 @@ function VideoAccessSettingsCard({ complex, onChanged }: { complex: Complex | nu
         {charges && (
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs text-ink-400">
-              Precio del pase (ARS)
+              Precio por partido (ARS)
               <input
                 required
                 type="number"
@@ -445,7 +445,7 @@ function VideoAccessSettingsCard({ complex, onChanged }: { complex: Complex | nu
               />
             </label>
             <label className="text-xs text-ink-400">
-              Duración del pase (días)
+              Duración del pase (días, solo pases viejos)
               <input
                 required
                 type="number"

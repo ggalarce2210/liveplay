@@ -65,7 +65,7 @@ export class ClipsController {
     // Antes esto no chequeaba nada de pago: un PLAYER sin pase vigente podía generar un clip de
     // un partido de un complejo que cobra y esquivar así el paywall de VideosService (§25) por
     // completo. Mismo criterio que VideosService.checkPaywall() (ver comentario ahí).
-    await this.assertVideoAccess(match.complex, user);
+    await this.assertVideoAccess(match.complex, match.id, user);
 
     const [clip] = await this.db
       .insert(clips)
@@ -85,7 +85,7 @@ export class ClipsController {
     if (clip.createdByUserId !== user.userId) throw new ForbiddenException();
     // Mismo chequeo que en `create()`: si el pase del usuario venció después de generar el clip
     // (o el clip es viejo, de antes de este fix), tampoco se entrega la URL de descarga.
-    if (clip.match?.complex) await this.assertVideoAccess(clip.match.complex, user);
+    if (clip.match?.complex) await this.assertVideoAccess(clip.match.complex, clip.match.id, user);
     if (clip.status !== 'READY' || !clip.storageKey) return { status: clip.status, url: null };
     const url = await this.storage.getSignedReadUrl(clip.storageKey, 60 * 30);
     return { status: clip.status, url };
@@ -104,7 +104,7 @@ export class ClipsController {
     });
     if (!clip) throw new ForbiddenException();
     if (clip.createdByUserId !== user.userId) throw new ForbiddenException();
-    if (clip.match?.complex) await this.assertVideoAccess(clip.match.complex, user);
+    if (clip.match?.complex) await this.assertVideoAccess(clip.match.complex, clip.match.id, user);
     const [updated] = await this.db
       .update(clips)
       .set({ status: 'PENDING', errorMessage: null, updatedAt: new Date() })
@@ -134,16 +134,17 @@ export class ClipsController {
    */
   private async assertVideoAccess(
     complex: { id: string; chargesForVideoAccess: boolean; videoAccessPriceArs: number | null; videoAccessPassDays: number | null } | null | undefined,
+    matchId: string,
     user: AuthUser,
   ) {
     if (!complex?.chargesForVideoAccess) return;
     if (user.role !== Role.PLAYER) return;
-    const hasAccess = await this.videoAccess.hasActivePass(complex.id, user.userId);
+    const hasAccess = await this.videoAccess.hasAccessToMatch(complex.id, matchId, user.userId);
     if (hasAccess) return;
     throw new HttpException(
       {
         code: 'PAYMENT_REQUIRED',
-        message: 'Necesitás un pase vigente para este complejo para generar o descargar clips.',
+        message: 'Necesitás pagar este partido para generar o descargar clips.',
         complexId: complex.id,
         priceArs: complex.videoAccessPriceArs,
         passDays: complex.videoAccessPassDays,

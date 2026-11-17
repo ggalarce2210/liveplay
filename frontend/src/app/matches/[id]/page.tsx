@@ -250,11 +250,10 @@ export default function MatchDetailPage() {
               />
             ) : playback?.status === 'PAYMENT_REQUIRED' ? (
               <div className="card flex aspect-video flex-col items-center justify-center gap-3 px-6 text-center">
-                <p className="text-white">🔒 Este complejo cobra por ver sus videos</p>
-                {playback.priceArs != null && playback.passDays != null && (
+                <p className="text-white">🔒 Desbloqueá el video de este partido</p>
+                {playback.priceArs != null && (
                   <p className="text-sm text-ink-400">
-                    ${playback.priceArs.toLocaleString('es-AR')} ARS · acceso por {playback.passDays} día{playback.passDays === 1 ? '' : 's'} a
-                    todos los videos del complejo
+                    ${playback.priceArs.toLocaleString('es-AR')} ARS · pagás solo este partido y podés verlo y hacer tus clips
                   </p>
                 )}
                 {buyAccessError && <p className="text-xs text-red-400">{buyAccessError}</p>}

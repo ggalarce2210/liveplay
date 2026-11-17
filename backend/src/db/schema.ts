@@ -177,6 +177,12 @@ export const videoAccessPasses = pgTable('video_access_passes', {
   id: id(),
   complexId: uuid('complex_id').notNull().references(() => complexes.id, { onDelete: 'cascade' }),
   userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  /**
+   * Partido que se compró (2026-11-17, pedido del usuario): pagar desbloquea SOLO ese video,
+   * no todos los del complejo. Null = pase viejo por complejo (vendido antes de este cambio),
+   * que se sigue respetando hasta su `expiresAt`.
+   */
+  matchId: uuid('match_id').references(() => matches.id, { onDelete: 'cascade' }),
   status: videoAccessPassStatusEnum('status').notNull().default('PENDING'),
   amountArs: doublePrecision('amount_ars').notNull(),
   passDaysSnapshot: integer('pass_days_snapshot').notNull(),
@@ -195,6 +201,7 @@ export const videoAccessPasses = pgTable('video_access_passes', {
   ...timestamps,
 }, (t) => ({
   complexUserIdx: index('video_access_passes_complex_user_idx').on(t.complexId, t.userId),
+  matchUserIdx: index('video_access_passes_match_user_idx').on(t.matchId, t.userId),
   externalRefIdx: index('video_access_passes_external_ref_idx').on(t.externalReference),
 }));
 

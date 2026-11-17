@@ -52,7 +52,7 @@ export class VideosService {
     if (!complex?.chargesForVideoAccess) return { blocked: false as const };
     if (requester.role !== Role.PLAYER) return { blocked: false as const };
 
-    const hasAccess = await this.videoAccess.hasActivePass(complex.id, requester.userId);
+    const hasAccess = await this.videoAccess.hasAccessToMatch(complex.id, video.match?.id, requester.userId);
     if (hasAccess) return { blocked: false as const };
 
     return {
