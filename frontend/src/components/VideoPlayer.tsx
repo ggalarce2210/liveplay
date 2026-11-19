@@ -43,6 +43,15 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
   const [speedMenuOpen, setSpeedMenuOpen] = useState(false);
   const [thumbnailCues, setThumbnailCues] = useState<ThumbnailCue[]>([]);
   const [bookmarkDraft, setBookmarkDraft] = useState<string | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  // Pantalla completa "de respaldo" hecha con CSS (position:fixed cubriendo toda la
+  // ventana), para cuando la Fullscreen API del navegador no está disponible. Esto pasa
+  // siempre en Safari de iPhone (ahí `Element.requestFullscreen` no existe para nada que
+  // no sea el <video> nativo) y también en navegadores embebidos como el de WhatsApp o
+  // Instagram al abrir un link compartido (reporte real de usuario: el botón no hacía
+  // nada en el celular, en iPhone y en Android). No depende de ninguna API del navegador,
+  // así que funciona en cualquier lado.
+  const [pseudoFullscreen, setPseudoFullscreen] = useState(false);
 
   useImperativeHandle(ref, () => ({
     seek: (time: number) => {
@@ -119,20 +128,75 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
     setSpeedMenuOpen(false);
   }
 
-  function toggleFullscreen() {
-    if (!containerRef.current) return;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else containerRef.current.requestFullscreen();
+  useEffect(() => {
+    function onFullscreenChange() {
+      const fsEl = document.fullscreenElement || (document as any).webkitFullscreenElement;
+      setIsFullscreen(!!fsEl);
+      // Si el usuario sale de la pantalla completa nativa con el botón del propio
+      // navegador (no con nuestro botón), hay que sincronizar el estado igual.
+      if (!fsEl) setPseudoFullscreen(false);
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
+    };
+  }, []);
+
+  // Salir de la pantalla completa "de respaldo" con Escape, igual que la nativa.
+  useEffect(() => {
+    if (!pseudoFullscreen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.code === 'Escape') setPseudoFullscreen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [pseudoFullscreen]);
+
+  async function toggleFullscreen() {
+    const el = containerRef.current as any;
+    if (!el) return;
+
+    if (pseudoFullscreen) {
+      setPseudoFullscreen(false);
+      return;
+    }
+    if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+      if (document.exitFullscreen) await document.exitFullscreen().catch(() => {});
+      else if ((document as any).webkitExitFullscreen) (document as any).webkitExitFullscreen();
+      return;
+    }
+
+    const request = el.requestFullscreen || el.webkitRequestFullscreen || el.webkitRequestFullScreen || el.mozRequestFullScreen || el.msRequestFullscreen;
+    if (request) {
+      try {
+        await request.call(el);
+        return;
+      } catch {
+        // La API existe pero el navegador la rechazó (pasa en algunos navegadores
+        // embebidos) — seguimos abajo con el respaldo de CSS.
+      }
+    }
+    // Sin Fullscreen API disponible (iPhone Safari, navegadores embebidos): respaldo de CSS.
+    setPseudoFullscreen(true);
   }
 
   const spriteUrl = thumbnailCues[0]?.imageUrl ?? null;
 
   return (
-    <div ref={containerRef} className="overflow-hidden rounded-2xl border border-ink-700/60 bg-black">
-      <div className="relative aspect-video w-full bg-black">
+    <div
+      ref={containerRef}
+      className={
+        pseudoFullscreen
+          ? 'fixed inset-0 z-50 flex flex-col overflow-y-auto bg-black'
+          : 'overflow-hidden rounded-2xl border border-ink-700/60 bg-black'
+      }
+    >
+      <div className={pseudoFullscreen ? 'relative w-full flex-shrink-0 bg-black' : 'relative aspect-video w-full bg-black'}>
         <video
           ref={videoRef}
-          className="h-full w-full"
+          className={pseudoFullscreen ? 'max-h-[70vh] w-full' : 'h-full w-full'}
           playsInline
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -223,13 +287,26 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
                 pantalla completa" (reporte real de un usuario: no veía ninguna opción de
                 pantalla completa). Fix: un SVG propio, inline, que se ve igual en cualquier
                 navegador/dispositivo sin depender de qué glifos tenga instalados. */}
-            <button onClick={toggleFullscreen} className="text-white" title="Pantalla completa">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3" />
-                <path d="M16 3h3a2 2 0 0 1 2 2v3" />
-                <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
-                <path d="M3 16v3a2 2 0 0 0 2 2h3" />
-              </svg>
+            <button
+              onClick={toggleFullscreen}
+              className="text-white"
+              title={isFullscreen || pseudoFullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'}
+            >
+              {isFullscreen || pseudoFullscreen ? (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3v3a2 2 0 0 1-2 2H3" />
+                  <path d="M21 8h-3a2 2 0 0 1-2-2V3" />
+                  <path d="M3 16h3a2 2 0 0 1 2 2v3" />
+                  <path d="M16 21v-3a2 2 0 0 1 2-2h3" />
+                </svg>
+              ) : (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+                  <path d="M16 3h3a2 2 0 0 1 2 2v3" />
+                  <path d="M21 16v3a2 2 0 0 1-2 2h-3" />
+                  <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
