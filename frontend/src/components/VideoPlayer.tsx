@@ -189,14 +189,18 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
       ref={containerRef}
       className={
         pseudoFullscreen
-          ? 'fixed inset-0 z-50 flex flex-col overflow-y-auto bg-black'
+          ? 'fixed inset-0 z-50 flex flex-col bg-black'
           : 'overflow-hidden rounded-2xl border border-ink-700/60 bg-black'
       }
     >
-      <div className={pseudoFullscreen ? 'relative w-full flex-shrink-0 bg-black' : 'relative aspect-video w-full bg-black'}>
+      {/* En pseudoFullscreen el video ocupa todo el espacio vertical disponible (flex-1,
+          en vez de un alto fijo en vh) y usa object-contain para no deformarse — así se
+          aprovecha toda la pantalla del celular, dejando solo la franja de controles abajo,
+          en vez de un recuadro chico con mucho espacio negro alrededor. */}
+      <div className={pseudoFullscreen ? 'relative w-full flex-1 min-h-0 bg-black' : 'relative aspect-video w-full bg-black'}>
         <video
           ref={videoRef}
-          className={pseudoFullscreen ? 'max-h-[70vh] w-full' : 'h-full w-full'}
+          className={pseudoFullscreen ? 'absolute inset-0 h-full w-full object-contain' : 'h-full w-full'}
           playsInline
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -216,7 +220,7 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
       </div>
 
       {/* Barra de controles principal */}
-      <div className="space-y-3 bg-ink-950 px-4 py-3">
+      <div className={pseudoFullscreen ? 'flex-shrink-0 space-y-2 bg-ink-950 px-3 py-2' : 'space-y-3 bg-ink-950 px-4 py-3'}>
         <Timeline
           duration={duration}
           currentTime={currentTime}
@@ -314,35 +318,41 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
         {/* Los botones -30s/-10s/-5s/REPLAY/+5s/+10s/+30s se sacaron (2026-11-14, pedido del
             usuario): en el celular empujaban "Crear clip" muy abajo. Para moverse alcanza con la
             barra; en compu siguen las flechas del teclado (±5s). */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="ml-auto flex items-center gap-2">
-            {bookmarkDraft === null ? (
-              <button onClick={() => setBookmarkDraft('')} className="btn-secondary !px-3 !py-1.5 text-xs">
-                ★ Marcar este momento
-              </button>
-            ) : (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (bookmarkDraft.trim()) onCreateBookmark(currentTime, bookmarkDraft.trim());
-                  setBookmarkDraft(null);
-                }}
-                className="flex items-center gap-2"
-              >
-                <input
-                  autoFocus
-                  value={bookmarkDraft}
-                  onChange={(e) => setBookmarkDraft(e.target.value)}
-                  placeholder={`Nombre (ej: "Gol de Juan") — ${formatClock(currentTime)}`}
-                  className="input-field !py-1.5 text-xs"
-                />
-                <button type="submit" className="btn-primary !px-3 !py-1.5 text-xs">
-                  Guardar
+        {/* En pseudoFullscreen esta fila se oculta a propósito (2026-11-19): el pedido era que
+            pantalla completa se sienta como pantalla completa de verdad, con el video ocupando
+            todo lo posible — "Marcar este momento" sigue disponible saliendo de pantalla
+            completa. */}
+        {!pseudoFullscreen && (
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="ml-auto flex items-center gap-2">
+              {bookmarkDraft === null ? (
+                <button onClick={() => setBookmarkDraft('')} className="btn-secondary !px-3 !py-1.5 text-xs">
+                  ★ Marcar este momento
                 </button>
-              </form>
-            )}
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (bookmarkDraft.trim()) onCreateBookmark(currentTime, bookmarkDraft.trim());
+                    setBookmarkDraft(null);
+                  }}
+                  className="flex items-center gap-2"
+                >
+                  <input
+                    autoFocus
+                    value={bookmarkDraft}
+                    onChange={(e) => setBookmarkDraft(e.target.value)}
+                    placeholder={`Nombre (ej: "Gol de Juan") — ${formatClock(currentTime)}`}
+                    className="input-field !py-1.5 text-xs"
+                  />
+                  <button type="submit" className="btn-primary !px-3 !py-1.5 text-xs">
+                    Guardar
+                  </button>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
