@@ -189,15 +189,19 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
       ref={containerRef}
       className={
         pseudoFullscreen
-          ? 'fixed inset-0 z-50 flex flex-col bg-black'
+          ? 'fixed inset-0 z-50 bg-black'
           : 'overflow-hidden rounded-2xl border border-ink-700/60 bg-black'
       }
     >
-      {/* En pseudoFullscreen el video ocupa todo el espacio vertical disponible (flex-1,
-          en vez de un alto fijo en vh) y usa object-contain para no deformarse — así se
-          aprovecha toda la pantalla del celular, dejando solo la franja de controles abajo,
-          en vez de un recuadro chico con mucho espacio negro alrededor. */}
-      <div className={pseudoFullscreen ? 'relative w-full flex-1 min-h-0 bg-black' : 'relative aspect-video w-full bg-black'}>
+      {/* En pseudoFullscreen el video ocupa TODA la pantalla (absolute inset-0, no un alto
+          limitado por flex) y los controles van superpuestos abajo con un degradé, en vez de
+          empujar el video hacia arriba. Esto importa sobre todo al rotar a horizontal: con el
+          layout anterior (video + franja de controles en columna) el alto disponible en
+          horizontal es chico y los controles se comían buena parte, dejando el video chico
+          igual — superponiendo los controles, el video siempre usa el 100% de la pantalla sin
+          importar la orientación (reporte real de usuario: "al girar la pantalla se sigue
+          viendo chico"). */}
+      <div className={pseudoFullscreen ? 'absolute inset-0 bg-black' : 'relative aspect-video w-full bg-black'}>
         <video
           ref={videoRef}
           className={pseudoFullscreen ? 'absolute inset-0 h-full w-full object-contain' : 'h-full w-full'}
@@ -213,14 +217,22 @@ const VideoPlayer = forwardRef<VideoPlayerHandle, Props>(function VideoPlayer(
           onClick={togglePlay}
         />
         {!playing && (
-          <button onClick={togglePlay} className="absolute inset-0 flex items-center justify-center bg-black/20 transition hover:bg-black/10">
+          <button onClick={togglePlay} className="absolute inset-0 z-0 flex items-center justify-center bg-black/20 transition hover:bg-black/10">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-white/90 text-2xl text-black shadow-lg">▶</span>
           </button>
         )}
       </div>
 
-      {/* Barra de controles principal */}
-      <div className={pseudoFullscreen ? 'flex-shrink-0 space-y-2 bg-ink-950 px-3 py-2' : 'space-y-3 bg-ink-950 px-4 py-3'}>
+      {/* Barra de controles principal — en pseudoFullscreen queda superpuesta sobre el video
+          (absolute + degradé) en vez de ocupar su propia franja fija, con z-10 para que sus
+          botones sigan siendo clickeables por encima del botón grande de play/pause. */}
+      <div
+        className={
+          pseudoFullscreen
+            ? 'absolute inset-x-0 bottom-0 z-10 space-y-2 bg-gradient-to-t from-black/90 via-black/70 to-transparent px-3 pb-2 pt-10'
+            : 'space-y-3 bg-ink-950 px-4 py-3'
+        }
+      >
         <Timeline
           duration={duration}
           currentTime={currentTime}
